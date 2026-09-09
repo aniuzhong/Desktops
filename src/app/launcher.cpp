@@ -185,7 +185,7 @@ namespace desktops::launcher
         void start(const std::wstring& desktop, const std::wstring& command)
         {
             log::Info(std::format(L"[launch] command '{}'", command));
-            const std::vector<DWORD> before = desktop_window_pids(desktop);
+            const std::vector<DWORD> before = DesktopWindowPids(desktop);
             STARTUPINFOW si{ .cb = sizeof(si) };
             si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
             std::wstring mutableCommand = command;
@@ -199,7 +199,7 @@ namespace desktops::launcher
             }
 
             log::Info(std::format(L"[launch] pid {} on '{}'", process.dwProcessId, desktop));
-            if (!probe_new_window(desktop, before, kLandingProbeMs))
+            if (!ProbeNewWindow(desktop, before, kLandingProbeMs))
             {
                 log::Warn(std::format(L"[launch] no new window on '{}' within {} ms", desktop, kLandingProbeMs));
                 report(std::format(L"'{}' started but did not show a window on the desktop.", command));

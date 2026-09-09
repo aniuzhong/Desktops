@@ -38,7 +38,7 @@ namespace desktops::panel
             HWND list = GetDlgItem(g_panel, IDC_DESKTOP_LIST);
             SendMessageW(list, LB_RESETCONTENT, 0, 0);
             SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kDefaultDesktop));
-            for (const std::wstring& name : list_extra_desktops())
+            for (const std::wstring& name : ListExtraDesktops())
                 SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
         }
 
@@ -65,7 +65,7 @@ namespace desktops::panel
         {
             const std::wstring input = wilx::TryGetInputDesktopName();
             if (_wcsicmp(input.c_str(), kDefaultDesktop) != 0)
-                switch_input_to(kDefaultDesktop);
+                SwitchInputTo(kDefaultDesktop);
             refresh_list();
             recall_panel();
             log::Info(L"[home] panel is home");
@@ -79,7 +79,7 @@ namespace desktops::panel
         {
             if (!satellite::is_present(name))
                 satellite::spawn(name, g_panel);
-            if (!probe_process_window(name, GetCurrentProcessId(), kProbeBudgetMs))
+            if (!ProbeProcessWindow(name, GetCurrentProcessId(), kProbeBudgetMs))
             {
                 satellite::tear_down(name);
                 log::Err(std::format(L"[switch] satellite on '{}' never appeared", name), 0);
@@ -87,7 +87,7 @@ namespace desktops::panel
                     L"Virtual Desktop", MB_ICONERROR | MB_TASKMODAL);
                 return false;
             }
-            if (!switch_input_to(name))
+            if (!SwitchInputTo(name))
                 return false;
 
             const std::uint64_t deadline = GetTickCount64() + kSwitchConfirmMs;
@@ -103,7 +103,7 @@ namespace desktops::panel
                 Sleep(100);
             }
             log::Err(std::format(L"[switch] '{}' never became the input desktop", name), 0);
-            switch_input_to(kDefaultDesktop);
+            SwitchInputTo(kDefaultDesktop);
             MessageBoxW(g_panel, std::format(L"Switching to '{}' did not take effect.", name).c_str(),
                 L"Virtual Desktop", MB_ICONWARNING | MB_TASKMODAL);
             return false;
@@ -184,7 +184,7 @@ namespace desktops::panel
             // console is what pins the desktop, and the user enters it later via
             // Switch To. The created desktop dies if the seed cannot land — an
             // unentered desktop is not kept, by design.
-            const std::vector<std::wstring> taken = list_extra_desktops();
+            const std::vector<std::wstring> taken = ListExtraDesktops();
             std::wstring name;
             if (!prompt_desktop_name(next_free_name(taken), name))
                 return;
@@ -213,7 +213,7 @@ namespace desktops::panel
             }
 
             const DWORD seedPid = seed::powershell(name);
-            const bool seeded = seedPid != 0 && probe_process_window(name, seedPid, kProbeBudgetMs);
+            const bool seeded = seedPid != 0 && ProbeProcessWindow(name, seedPid, kProbeBudgetMs);
             if (seeded)
                 created.reset();   // the seed console pins the desktop from here on
             else

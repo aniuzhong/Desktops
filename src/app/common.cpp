@@ -19,7 +19,7 @@ namespace desktops
         }
     }
 
-    std::vector<std::wstring> list_extra_desktops()
+    std::vector<std::wstring> ListExtraDesktops()
     {
         std::vector<std::wstring> names;
         wilx::for_each_desktop_nothrow([&](PCWSTR rawName) {
@@ -36,7 +36,7 @@ namespace desktops
         return names;
     }
 
-    bool switch_input_to(const std::wstring& name)
+    bool SwitchInputTo(const std::wstring& name)
     {
         log::Info(std::format(L"[switch] moving input desktop to '{}'", name));
         wil::unique_hdesk desktop(OpenDesktopW(name.c_str(), 0, FALSE, DESKTOP_SWITCHDESKTOP));
@@ -53,7 +53,7 @@ namespace desktops
         return true;
     }
 
-    bool probe_process_window(const std::wstring& desktop, DWORD pid, DWORD timeoutMs)
+    bool ProbeProcessWindow(const std::wstring& desktop, DWORD pid, DWORD timeoutMs)
     {
         wil::unique_hdesk handle(OpenDesktopW(desktop.c_str(), 0, FALSE, DESKTOP_READOBJECTS));
         if (!handle)
@@ -78,7 +78,7 @@ namespace desktops
         }
     }
 
-    std::vector<DWORD> desktop_window_pids(const std::wstring& desktop)
+    std::vector<DWORD> DesktopWindowPids(const std::wstring& desktop)
     {
         std::vector<DWORD> pids;
         wil::unique_hdesk handle(OpenDesktopW(desktop.c_str(), 0, FALSE, DESKTOP_READOBJECTS));
@@ -93,7 +93,7 @@ namespace desktops
         return pids;
     }
 
-    bool probe_new_window(const std::wstring& desktop, const std::vector<DWORD>& before, DWORD timeoutMs)
+    bool ProbeNewWindow(const std::wstring& desktop, const std::vector<DWORD>& before, DWORD timeoutMs)
     {
         const auto arrived = [&before](const std::vector<DWORD>& pids) {
             return std::any_of(pids.begin(), pids.end(), [&](DWORD pid) {
@@ -103,7 +103,7 @@ namespace desktops
         const ULONGLONG deadline = GetTickCount64() + timeoutMs;
         for (;;)
         {
-            if (arrived(desktop_window_pids(desktop)))
+            if (arrived(DesktopWindowPids(desktop)))
                 return true;
             if (GetTickCount64() >= deadline)
                 return false;

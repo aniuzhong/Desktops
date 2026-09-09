@@ -37,7 +37,7 @@ namespace desktops::satellite
         void go_home(DialogContext& context, HWND dialog)
         {
             log::Info(std::format(L"[home] leaving '{}'", context.desktop));
-            switch_input_to(kDefaultDesktop);
+            SwitchInputTo(kDefaultDesktop);
             PostMessageW(context.panel, WM_APP_HOME_RETURN, 0, 0);
             DestroyWindow(dialog);
             PostQuitMessage(0);
@@ -186,6 +186,6 @@ namespace desktops::satellite
 
     bool is_present(const std::wstring& desktop)
     {
-        return probe_process_window(desktop, GetCurrentProcessId(), 0);
+        return ProbeProcessWindow(desktop, GetCurrentProcessId(), 0);
     }
 }
