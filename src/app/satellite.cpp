@@ -29,6 +29,17 @@ namespace desktops::satellite
             Runner* runner;
         };
 
+        // Launch failures belong on the desktop the dialog lives on: the user is
+        // standing there when they typed the command.
+        struct DialogSink : Runner::Sink
+        {
+            void OnLaunchFailed(const std::wstring& desktop, const std::wstring& detail) override
+            {
+                log::Warn(std::format(L"[launch] '{}' on '{}'", detail, desktop));
+                MessageBoxW(nullptr, detail.c_str(), L"Run", MB_ICONWARNING | MB_TOPMOST | MB_TASKMODAL);
+            }
+        };
+
         // One satellite per thread; the context lives on the thread's stack and
         // the dialog reaches it through this pointer.
         thread_local DialogContext* t_context = nullptr;
@@ -103,7 +114,8 @@ namespace desktops::satellite
                 return;
             }
 
-            Runner runner;
+            DialogSink sink;
+            Runner runner(sink);
             DialogContext context{ std::move(desktop), panel, &runner };
             t_context = &context;
             // CreateDialogParamW derives the dialog's desktop from this thread's attachment.

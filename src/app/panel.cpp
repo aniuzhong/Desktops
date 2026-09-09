@@ -10,19 +10,39 @@
 #include "common.h"
 #include "logging.h"
 #include "resource.h"
+#include "runner.h"
 #include "satellite.h"
-#include "seed.h"
 #include "wilx/win32_helpers.h"
 
 namespace desktops::panel
 {
     namespace
     {
-        constexpr DWORD kProbeBudgetMs = 5000;       // satellite readiness / seed landing budget
+        constexpr DWORD kProbeBudgetMs = 5000;       // satellite readiness budget
         constexpr DWORD kSwitchConfirmMs = 3000;     // undo budget: input must actually arrive
 
         HWND g_panel = nullptr;
         HINSTANCE g_instance = nullptr;
+
+        // What a new desktop is seeded with. This names *what* to run; keeping the
+        // console alive (-NoExit) is Runner knowledge, not the caller's.
+        constexpr wchar_t kAnchorInput[] = L"powershell.exe";
+
+        // The panel reports launch failures in its own business flow (see on_new),
+        // so this sink only records them — unlike the RunnerDialog sink, which pops
+        // a box on the desktop it lives on.
+        struct PanelSink : Runner::Sink
+        {
+            void OnLaunchFailed(const std::wstring& desktop, const std::wstring& detail) override
+            {
+                log::Warn(std::format(L"[launch] '{}' on '{}'", detail, desktop));
+            }
+        };
+
+        // One Runner per caller, never shared with a RunnerDialog. These two become
+        // Manager members in step 4.
+        PanelSink g_sink;
+        Runner g_runner(g_sink);
 
         std::wstring trim(const std::wstring& value)
         {
@@ -212,8 +232,8 @@ namespace desktops::panel
                 return;
             }
 
-            const DWORD seedPid = seed::powershell(name);
-            const bool seeded = seedPid != 0 && ProbeProcessWindow(name, seedPid, kProbeBudgetMs);
+            const Runner::LaunchResult anchor = g_runner.Launch(name, kAnchorInput);
+            const bool seeded = anchor.arrived;
             if (seeded)
                 created.reset();   // the seed console pins the desktop from here on
             else

@@ -2,6 +2,7 @@
 
 #include <format>
 #include <utility>
+#include <vector>
 
 #include <shlwapi.h>
 #include <wil/resource.h>
@@ -170,12 +171,117 @@ namespace desktops
             error = std::format(L"Windows cannot find '{}'.", input);
             return {};
         }
+
+        // The directory that holds the conhost-hosted shells, or empty.
+        std::wstring system_directory()
+        {
+            wchar_t buffer[MAX_PATH] = {};
+            const UINT length = GetSystemDirectoryW(buffer, MAX_PATH);
+            if (length == 0 || length > MAX_PATH - 40)
+                return {};
+            return buffer;
+        }
     }
 
-    void Runner::report(const std::wstring& detail)
+    Runner::Runner(Sink& sink)
+        : sink_(sink)
     {
-        log::Warn(std::format(L"[launch] {}", detail));
-        MessageBoxW(nullptr, detail.c_str(), L"Run", MB_ICONWARNING | MB_TOPMOST | MB_TASKMODAL);
+    }
+
+    Runner::Recipe Runner::Classify(std::wstring_view input) const
+    {
+        const std::wstring text(input);   // _wcsicmp wants null termination
+        static constexpr struct
+        {
+            const wchar_t* name;
+            Recipe recipe;
+        } kShells[] = {
+            { L"powershell", Recipe::kPowerShell5 },
+            { L"powershell.exe", Recipe::kPowerShell5 },
+            { L"pwsh", Recipe::kPowerShell7 },
+            { L"pwsh.exe", Recipe::kPowerShell7 },
+            { L"cmd", Recipe::kCmd },
+            { L"cmd.exe", Recipe::kCmd },
+        };
+        for (const auto& shell : kShells)
+        {
+            if (_wcsicmp(text.c_str(), shell.name) == 0)
+                return shell.recipe;
+        }
+        return url_scheme(text).empty() ? Recipe::kResolvedProgram : Recipe::kUrl;
+    }
+
+    Runner::LaunchResult Runner::launch_directory(const std::wstring& desktop, const std::wstring& path)
+    {
+        return start(desktop, std::format(L"explorer.exe \"{}\"", path));
+    }
+
+    Runner::LaunchResult Runner::launch_url(const std::wstring& desktop, const std::wstring& url)
+    {
+        const std::wstring handler = assoc_string(ASSOCSTR_EXECUTABLE, url_scheme(url));
+        if (handler.empty())
+        {
+            report(desktop, std::format(L"No program is associated with '{}'.", url));
+            return {};
+        }
+        return start(desktop, std::format(L"\"{}\" \"{}\"", handler, url));
+    }
+
+    Runner::LaunchResult Runner::launch_program(const std::wstring& desktop, const std::wstring& input)
+    {
+        auto [program, arguments] = split_program(input);
+        std::wstring error;
+        std::wstring command = resolve_program(program, arguments, error);
+        if (command.empty() && input.find(L' ') != std::wstring::npos && input.front() != L'"')
+            command = resolve_unquoted_prefixes(input, error);
+        if (command.empty())
+        {
+            report(desktop, error);
+            return {};
+        }
+        return start(desktop, command);
+    }
+
+    Runner::LaunchResult Runner::launch_powershell5(const std::wstring& desktop)
+    {
+        // TODO: when Windows Terminal is the default terminal, conhost hands the
+        // console off to it and the desktop never gets pinned (README "Known
+        // Problems"). Detecting that situation belongs here.
+        const std::wstring directory = system_directory();
+        if (directory.empty())
+        {
+            report(desktop, L"Could not locate the Windows PowerShell directory.");
+            return {};
+        }
+        // -NoExit is Runner knowledge: a console that exits immediately is not a
+        // usable state, and leaves a new desktop with nothing to hold it open.
+        return start(desktop, std::format(L"\"{}\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoExit", directory));
+    }
+
+    Runner::LaunchResult Runner::launch_powershell7(const std::wstring& desktop)
+    {
+        std::wstring error;
+        const std::wstring command = resolve_program(L"pwsh.exe", std::wstring{}, error);
+        if (command.empty())
+        {
+            // TODO: distinguish a real pwsh.exe from an App Execution Alias — an
+            // MSIX alias reports a stub pid and its window belongs elsewhere.
+            report(desktop, error.empty() ? L"PowerShell 7 (pwsh.exe) was not found." : error);
+            return {};
+        }
+        return start(desktop, std::format(L"{} -NoExit", command));
+    }
+
+    Runner::LaunchResult Runner::launch_cmd(const std::wstring& desktop)
+    {
+        const std::wstring directory = system_directory();
+        if (directory.empty())
+        {
+            report(desktop, L"Could not locate cmd.exe.");
+            return {};
+        }
+        // /K mirrors -NoExit: a console that exits immediately is not a usable state.
+        return start(desktop, std::format(L"\"{}\\cmd.exe\" /K", directory));
     }
 
     // The single doorway: CreateProcessW with lpDesktop. A success return is no
@@ -183,7 +289,7 @@ namespace desktops
     // within a second, and packaged-app aliases return a stub pid while the
     // real window belongs to a different process — so arrival is judged by
     // snapshot-diff: any window that was not on the desktop before the launch.
-    void Runner::start(const std::wstring& desktop, const std::wstring& command)
+    Runner::LaunchResult Runner::start(const std::wstring& desktop, const std::wstring& command)
     {
         log::Info(std::format(L"[launch] command '{}'", command));
         const std::vector<DWORD> before = DesktopWindowPids(desktop);
@@ -195,55 +301,51 @@ namespace desktops
                 nullptr, nullptr, &si, &process))
         {
             log::Err(std::format(L"[launch] CreateProcessW failed for '{}'", command), GetLastError());
-            report(std::format(L"'{}' could not be started (error {}).", command, GetLastError()));
-            return;
+            report(desktop, std::format(L"'{}' could not be started (error {}).", command, GetLastError()));
+            return {};
         }
 
         log::Info(std::format(L"[launch] pid {} on '{}'", process.dwProcessId, desktop));
-        if (!ProbeNewWindow(desktop, before, kLandingProbeMs))
+        const bool arrived = ProbeNewWindow(desktop, before, kLandingProbeMs);
+        if (!arrived)
         {
             log::Warn(std::format(L"[launch] no new window on '{}' within {} ms", desktop, kLandingProbeMs));
-            report(std::format(L"'{}' started but did not show a window on the desktop.", command));
+            report(desktop, std::format(L"'{}' started but did not show a window on the desktop.", command));
         }
+        return LaunchResult{ process.dwProcessId, arrived };
     }
 
-    void Runner::Launch(const std::wstring& desktop, const std::wstring& rawInput)
+    void Runner::report(const std::wstring& desktop, const std::wstring& detail)
+    {
+        sink_.OnLaunchFailed(desktop, detail);
+    }
+
+    Runner::LaunchResult Runner::Launch(const std::wstring& desktop, const std::wstring& rawInput)
     {
         const std::wstring input = trim(rawInput);
         if (input.empty())
-            return;
+            return {};
         log::Info(std::format(L"[launch] '{}' on '{}'", input, desktop));
 
+        // Whether the input names a folder is a filesystem property, not a
+        // syntactic one, so it is decided here rather than inside Classify().
         const DWORD attributes = GetFileAttributesW(input.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))
-        {
-            start(desktop, std::format(L"explorer.exe \"{}\"", input));
-            return;
-        }
+            return launch_directory(desktop, input);
 
-        const std::wstring scheme = url_scheme(input);
-        if (!scheme.empty())
+        switch (Classify(input))
         {
-            const std::wstring handler = assoc_string(ASSOCSTR_EXECUTABLE, scheme);
-            if (handler.empty())
-            {
-                report(std::format(L"No program is associated with '{}'.", input));
-                return;
-            }
-            start(desktop, std::format(L"\"{}\" \"{}\"", handler, input));
-            return;
+        case Recipe::kUrl:
+            return launch_url(desktop, input);
+        case Recipe::kPowerShell5:
+            return launch_powershell5(desktop);
+        case Recipe::kPowerShell7:
+            return launch_powershell7(desktop);
+        case Recipe::kCmd:
+            return launch_cmd(desktop);
+        case Recipe::kResolvedProgram:
+            return launch_program(desktop, input);
         }
-
-        auto [program, arguments] = split_program(input);
-        std::wstring error;
-        std::wstring command = resolve_program(program, arguments, error);
-        if (command.empty() && input.find(L' ') != std::wstring::npos && input.front() != L'"')
-            command = resolve_unquoted_prefixes(input, error);
-        if (command.empty())
-        {
-            report(error);
-            return;
-        }
-        start(desktop, command);
+        return {};
     }
 }

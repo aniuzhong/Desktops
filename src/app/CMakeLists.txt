@@ -7,13 +7,11 @@ add_executable(VirtualDesktop WIN32
     panel.cpp
     satellite.cpp
     runner.cpp
-    seed.cpp
     common.cpp
     logging.cpp
     panel.h
     satellite.h
     runner.h
-    seed.h
     common.h
     logging.h
     resource.h
