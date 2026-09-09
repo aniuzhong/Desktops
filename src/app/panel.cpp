@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <format>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -11,14 +12,15 @@
 #include "logging.h"
 #include "resource.h"
 #include "runner.h"
-#include "satellite.h"
+#include "runner_dialog.h"
+#include "runner_events.h"
 #include "wilx/win32_helpers.h"
 
 namespace desktops::panel
 {
     namespace
     {
-        constexpr DWORD kProbeBudgetMs = 5000;       // satellite readiness budget
+        constexpr DWORD kProbeBudgetMs = 5000;       // dialog readiness budget
         constexpr DWORD kSwitchConfirmMs = 3000;     // undo budget: input must actually arrive
 
         HWND g_panel = nullptr;
@@ -43,6 +45,11 @@ namespace desktops::panel
         // Manager members in step 4.
         PanelSink g_sink;
         Runner g_runner(g_sink);
+
+        // The dialog registry: one RunnerDialog per desktop, keyed by name. Erased
+        // only on kFinished — an entry outlives its thread, never the reverse.
+        // Becomes Manager members in step 4.
+        std::map<std::wstring, std::unique_ptr<RunnerDialog>> g_dialogs;
 
         std::wstring trim(const std::wstring& value)
         {
@@ -91,18 +98,56 @@ namespace desktops::panel
             log::Info(L"[home] panel is home");
         }
 
-        // Brings the satellite up on the named desktop and moves input there.
+        // True when a window of this process already exists on that desktop — the
+        // ground truth for "is there a dialog there", even one we did not start.
+        bool runner_present(const std::wstring& desktop)
+        {
+            return ProbeProcessWindow(desktop, GetCurrentProcessId(), 0);
+        }
+
+        void spawn_runner(const std::wstring& desktop)
+        {
+            if (g_dialogs.contains(desktop))
+                return;
+            g_dialogs.emplace(desktop, std::make_unique<RunnerDialog>(desktop, g_panel, g_instance));
+        }
+
+        void drain_runner_events()
+        {
+            for (const RunnerEvent& event : TakeRunnerEvents())
+            {
+                switch (event.kind)
+                {
+                case RunnerEvent::Kind::kHomeReturned:
+                    on_go_home();
+                    break;
+                case RunnerEvent::Kind::kSpawnFailed:
+                    MessageBoxW(g_panel, std::format(L"Could not attach to desktop '{}'.", event.desktop).c_str(),
+                        L"Virtual Desktop", MB_ICONERROR | MB_TASKMODAL);
+                    refresh_list();
+                    break;
+                case RunnerEvent::Kind::kFinished:
+                    // Destroys the RunnerDialog, whose destructor joins the thread —
+                    // safe here because the thread has already reported it is done.
+                    g_dialogs.erase(event.desktop);
+                    break;
+                }
+            }
+        }
+
+        // Brings the dialog up on the named desktop and moves input there.
         // Returns true when the input desktop has verifiably arrived. The panel
         // thread never exits during any of this, so it can always take the user
         // back home — that is the undo agent.
         bool attach_and_switch(const std::wstring& name)
         {
-            if (!satellite::is_present(name))
-                satellite::spawn(name, g_panel);
+            if (!runner_present(name))
+                spawn_runner(name);
             if (!ProbeProcessWindow(name, GetCurrentProcessId(), kProbeBudgetMs))
             {
-                satellite::tear_down(name);
-                log::Err(std::format(L"[switch] satellite on '{}' never appeared", name), 0);
+                if (auto it = g_dialogs.find(name); it != g_dialogs.end())
+                    it->second->RequestClose();
+                log::Err(std::format(L"[switch] dialog on '{}' never appeared", name), 0);
                 MessageBoxW(g_panel, std::format(L"Could not attach to desktop '{}'.", name).c_str(),
                     L"Virtual Desktop", MB_ICONERROR | MB_TASKMODAL);
                 return false;
@@ -117,7 +162,8 @@ namespace desktops::panel
                 if (_wcsicmp(input.c_str(), name.c_str()) == 0)
                 {
                     log::Info(std::format(L"[switch] input desktop is now '{}'", name));
-                    satellite::activate(name);
+                    if (auto it = g_dialogs.find(name); it != g_dialogs.end())
+                        it->second->Activate();
                     return true;
                 }
                 Sleep(100);
@@ -251,7 +297,7 @@ namespace desktops::panel
             log::Info(std::format(L"[new] '{}' ready (not switched)", name));
         }
 
-        INT_PTR CALLBACK panel_proc(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam)
+        INT_PTR CALLBACK panel_proc(HWND dialog, UINT message, WPARAM wParam, LPARAM)
         {
             switch (message)
             {
@@ -277,24 +323,19 @@ namespace desktops::panel
                 }
                 break;
 
-            case satellite::WM_APP_HOME_RETURN:
-                on_go_home();
+            case kWmAppEventsPending:
+                drain_runner_events();
                 return TRUE;
-
-            case satellite::WM_APP_SPAWN_FAILED:
-            {
-                std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lParam));
-                MessageBoxW(dialog, std::format(L"Could not attach to desktop '{}'.", *name).c_str(),
-                    L"Virtual Desktop", MB_ICONERROR | MB_TASKMODAL);
-                refresh_list();
-                return TRUE;
-            }
 
             case WM_CLOSE:
                 DestroyWindow(dialog);
                 return TRUE;
 
             case WM_DESTROY:
+                // Best effort and non-blocking: the destructor would join each
+                // thread, which can stall if a dialog sits in a modal box.
+                for (auto& [name, runner] : g_dialogs)
+                    runner->RequestClose();
                 g_panel = nullptr;
                 PostQuitMessage(0);
                 return TRUE;

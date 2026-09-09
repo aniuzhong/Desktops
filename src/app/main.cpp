@@ -4,7 +4,6 @@
 
 #include "logging.h"
 #include "panel.h"
-#include "satellite.h"
 #include "wilx/win32_helpers.h"
 
 namespace {
@@ -53,7 +52,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
         return -1;
     }
 
-    desktops::satellite::set_module(instance);
     const int exit_code = desktops::panel::run(instance, go_home.get());
     desktops::log::Info(std::format(L"Exiting with {}", exit_code));
     return exit_code;

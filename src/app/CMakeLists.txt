@@ -5,12 +5,14 @@ configure_file(app.rc.in app.rc @ONLY)
 add_executable(VirtualDesktop WIN32
     main.cpp
     panel.cpp
-    satellite.cpp
+    runner_dialog.cpp
+    runner_events.cpp
     runner.cpp
     common.cpp
     logging.cpp
     panel.h
-    satellite.h
+    runner_dialog.h
+    runner_events.h
     runner.h
     common.h
     logging.h
