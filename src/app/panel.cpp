@@ -68,7 +68,7 @@ namespace desktops::panel
                 switch_input_to(kDefaultDesktop);
             refresh_list();
             recall_panel();
-            log::info(L"[home] panel is home");
+            log::Info(L"[home] panel is home");
         }
 
         // Brings the satellite up on the named desktop and moves input there.
@@ -82,7 +82,7 @@ namespace desktops::panel
             if (!probe_process_window(name, GetCurrentProcessId(), kProbeBudgetMs))
             {
                 satellite::tear_down(name);
-                log::error(std::format(L"[switch] satellite on '{}' never appeared", name), 0);
+                log::Err(std::format(L"[switch] satellite on '{}' never appeared", name), 0);
                 MessageBoxW(g_panel, std::format(L"Could not attach to desktop '{}'.", name).c_str(),
                     L"Virtual Desktop", MB_ICONERROR | MB_TASKMODAL);
                 return false;
@@ -96,13 +96,13 @@ namespace desktops::panel
                 const std::wstring input = wilx::TryGetInputDesktopName();
                 if (_wcsicmp(input.c_str(), name.c_str()) == 0)
                 {
-                    log::info(std::format(L"[switch] input desktop is now '{}'", name));
+                    log::Info(std::format(L"[switch] input desktop is now '{}'", name));
                     satellite::activate(name);
                     return true;
                 }
                 Sleep(100);
             }
-            log::error(std::format(L"[switch] '{}' never became the input desktop", name), 0);
+            log::Err(std::format(L"[switch] '{}' never became the input desktop", name), 0);
             switch_input_to(kDefaultDesktop);
             MessageBoxW(g_panel, std::format(L"Switching to '{}' did not take effect.", name).c_str(),
                 L"Virtual Desktop", MB_ICONWARNING | MB_TASKMODAL);
@@ -113,7 +113,7 @@ namespace desktops::panel
         {
             if (name.empty() || _wcsicmp(name.c_str(), kDefaultDesktop) == 0)
                 return;
-            log::info(std::format(L"[switch] to '{}'", name));
+            log::Info(std::format(L"[switch] to '{}'", name));
             attach_and_switch(name);
         }
 
@@ -200,13 +200,13 @@ namespace desktops::panel
                 return;
             }
 
-            log::info(std::format(L"[new] creating '{}'", name));
+            log::Info(std::format(L"[new] creating '{}'", name));
             // Held open until the seed proves it landed: a desktop with no window
             // on it dies with its last handle.
             wil::unique_hdesk created(CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr));
             if (!created)
             {
-                log::error(std::format(L"[new] CreateDesktopW('{}') failed", name), GetLastError());
+                log::Err(std::format(L"[new] CreateDesktopW('{}') failed", name), GetLastError());
                 MessageBoxW(g_panel, std::format(L"Could not create desktop '{}' (error {}).", name, GetLastError()).c_str(),
                     L"Virtual Desktop", MB_ICONERROR | MB_TASKMODAL);
                 return;
@@ -217,7 +217,7 @@ namespace desktops::panel
             if (seeded)
                 created.reset();   // the seed console pins the desktop from here on
             else
-                log::warn(std::format(L"[new] seed on '{}' did not land; desktop discarded", name));
+                log::Warn(std::format(L"[new] seed on '{}' did not land; desktop discarded", name));
 
             if (!seeded)
             {
@@ -228,7 +228,7 @@ namespace desktops::panel
             }
 
             refresh_list();
-            log::info(std::format(L"[new] '{}' ready (not switched)", name));
+            log::Info(std::format(L"[new] '{}' ready (not switched)", name));
         }
 
         INT_PTR CALLBACK panel_proc(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam)
@@ -289,7 +289,7 @@ namespace desktops::panel
         g_panel = CreateDialogParamW(instance, MAKEINTRESOURCEW(IDD_PANEL), nullptr, panel_proc, 0);
         if (!g_panel)
         {
-            log::error(L"[startup] panel creation failed", GetLastError());
+            log::Err(L"[startup] panel creation failed", GetLastError());
             return -1;
         }
         ShowWindow(g_panel, SW_SHOW);

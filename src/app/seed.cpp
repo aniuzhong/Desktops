@@ -14,7 +14,7 @@ namespace desktops::seed
         const UINT length = GetSystemDirectoryW(systemDirectory, MAX_PATH);
         if (length == 0 || length > MAX_PATH - 40)
         {
-            log::error(L"[seed] GetSystemDirectoryW failed", GetLastError());
+            log::Err(L"[seed] GetSystemDirectoryW failed", GetLastError());
             return 0;
         }
         const std::wstring exe =
@@ -27,10 +27,10 @@ namespace desktops::seed
         if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE,
                 nullptr, nullptr, &si, &process))
         {
-            log::error(std::format(L"[seed] launching powershell on '{}' failed", desktop), GetLastError());
+            log::Err(std::format(L"[seed] launching powershell on '{}' failed", desktop), GetLastError());
             return 0;
         }
-        log::info(std::format(L"[seed] powershell pid {} on '{}'", process.dwProcessId, desktop));
+        log::Info(std::format(L"[seed] powershell pid {} on '{}'", process.dwProcessId, desktop));
         return process.dwProcessId;
     }
 }

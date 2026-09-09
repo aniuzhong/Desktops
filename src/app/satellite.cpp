@@ -36,7 +36,7 @@ namespace desktops::satellite
         // the desktop switch, so there is no exit-policy flag to maintain.
         void go_home(DialogContext& context, HWND dialog)
         {
-            log::info(std::format(L"[home] leaving '{}'", context.desktop));
+            log::Info(std::format(L"[home] leaving '{}'", context.desktop));
             switch_input_to(kDefaultDesktop);
             PostMessageW(context.panel, WM_APP_HOME_RETURN, 0, 0);
             DestroyWindow(dialog);
@@ -91,14 +91,14 @@ namespace desktops::satellite
             wil::unique_hdesk desktopHandle(OpenDesktopW(desktop.c_str(), 0, FALSE, GENERIC_ALL));
             if (!desktopHandle)
             {
-                log::error(std::format(L"[satellite] OpenDesktopW('{}') failed", desktop), GetLastError());
+                log::Err(std::format(L"[satellite] OpenDesktopW('{}') failed", desktop), GetLastError());
                 PostMessageW(panel, WM_APP_SPAWN_FAILED, 0,
                     reinterpret_cast<LPARAM>(new std::wstring(desktop)));
                 return;
             }
             if (!SetThreadDesktop(desktopHandle.get()))
             {
-                log::error(L"[satellite] SetThreadDesktop failed", GetLastError());
+                log::Err(L"[satellite] SetThreadDesktop failed", GetLastError());
                 return;
             }
 
@@ -109,7 +109,7 @@ namespace desktops::satellite
                 run_dialog_proc, 0);
             if (!dialog)
             {
-                log::error(L"[satellite] dialog creation failed", GetLastError());
+                log::Err(L"[satellite] dialog creation failed", GetLastError());
                 return;
             }
             ShowWindow(dialog, SW_SHOW);
@@ -136,7 +136,7 @@ namespace desktops::satellite
                 std::scoped_lock lock(g_lock);
                 g_threads.erase(context.desktop);
             }
-            log::info(std::format(L"[satellite] '{}' thread exiting", context.desktop));
+            log::Info(std::format(L"[satellite] '{}' thread exiting", context.desktop));
         }
     }
 
@@ -153,7 +153,7 @@ namespace desktops::satellite
             g_threads[desktop] = GetThreadId(thread.native_handle());
         }
         thread.detach();
-        log::info(std::format(L"[satellite] spawned for '{}'", desktop));
+        log::Info(std::format(L"[satellite] spawned for '{}'", desktop));
     }
 
     void tear_down(const std::wstring& desktop)
@@ -169,7 +169,7 @@ namespace desktops::satellite
         }
         if (threadId)
             PostThreadMessageW(threadId, WM_QUIT, 0, 0);
-        log::info(std::format(L"[satellite] tear-down signaled for '{}'", desktop));
+        log::Info(std::format(L"[satellite] tear-down signaled for '{}'", desktop));
     }
 
     void activate(const std::wstring& desktop)

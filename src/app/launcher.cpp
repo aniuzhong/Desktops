@@ -173,7 +173,7 @@ namespace desktops::launcher
 
         void report(const std::wstring& detail)
         {
-            log::warn(std::format(L"[launch] {}", detail));
+            log::Warn(std::format(L"[launch] {}", detail));
             MessageBoxW(nullptr, detail.c_str(), L"Run", MB_ICONWARNING | MB_TOPMOST | MB_TASKMODAL);
         }
 
@@ -184,7 +184,7 @@ namespace desktops::launcher
         // snapshot-diff: any window that was not on the desktop before the launch.
         void start(const std::wstring& desktop, const std::wstring& command)
         {
-            log::info(std::format(L"[launch] command '{}'", command));
+            log::Info(std::format(L"[launch] command '{}'", command));
             const std::vector<DWORD> before = desktop_window_pids(desktop);
             STARTUPINFOW si{ .cb = sizeof(si) };
             si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
@@ -193,15 +193,15 @@ namespace desktops::launcher
             if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE,
                     nullptr, nullptr, &si, &process))
             {
-                log::error(std::format(L"[launch] CreateProcessW failed for '{}'", command), GetLastError());
+                log::Err(std::format(L"[launch] CreateProcessW failed for '{}'", command), GetLastError());
                 report(std::format(L"'{}' could not be started (error {}).", command, GetLastError()));
                 return;
             }
 
-            log::info(std::format(L"[launch] pid {} on '{}'", process.dwProcessId, desktop));
+            log::Info(std::format(L"[launch] pid {} on '{}'", process.dwProcessId, desktop));
             if (!probe_new_window(desktop, before, kLandingProbeMs))
             {
-                log::warn(std::format(L"[launch] no new window on '{}' within {} ms", desktop, kLandingProbeMs));
+                log::Warn(std::format(L"[launch] no new window on '{}' within {} ms", desktop, kLandingProbeMs));
                 report(std::format(L"'{}' started but did not show a window on the desktop.", command));
             }
         }
@@ -212,7 +212,7 @@ namespace desktops::launcher
         const std::wstring input = trim(rawInput);
         if (input.empty())
             return;
-        log::info(std::format(L"[launch] '{}' on '{}'", input, desktop));
+        log::Info(std::format(L"[launch] '{}' on '{}'", input, desktop));
 
         const DWORD attributes = GetFileAttributesW(input.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))

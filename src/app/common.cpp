@@ -38,16 +38,16 @@ namespace desktops
 
     bool switch_input_to(const std::wstring& name)
     {
-        log::info(std::format(L"[switch] moving input desktop to '{}'", name));
+        log::Info(std::format(L"[switch] moving input desktop to '{}'", name));
         wil::unique_hdesk desktop(OpenDesktopW(name.c_str(), 0, FALSE, DESKTOP_SWITCHDESKTOP));
         if (!desktop)
         {
-            log::error(std::format(L"[switch] OpenDesktopW('{}') failed", name), GetLastError());
+            log::Err(std::format(L"[switch] OpenDesktopW('{}') failed", name), GetLastError());
             return false;
         }
         if (!SwitchDesktop(desktop.get()))
         {
-            log::error(std::format(L"[switch] SwitchDesktop('{}') failed", name), GetLastError());
+            log::Err(std::format(L"[switch] SwitchDesktop('{}') failed", name), GetLastError());
             return false;
         }
         return true;
@@ -58,7 +58,7 @@ namespace desktops
         wil::unique_hdesk handle(OpenDesktopW(desktop.c_str(), 0, FALSE, DESKTOP_READOBJECTS));
         if (!handle)
         {
-            log::error(std::format(L"[probe] OpenDesktopW('{}') failed", desktop), GetLastError());
+            log::Err(std::format(L"[probe] OpenDesktopW('{}') failed", desktop), GetLastError());
             return false;
         }
         const ULONGLONG deadline = GetTickCount64() + timeoutMs;
