@@ -1,4 +1,4 @@
-#include "launcher.h"
+#include "runner.h"
 
 #include <format>
 #include <utility>
@@ -9,7 +9,7 @@
 #include "common.h"
 #include "logging.h"
 
-namespace desktops::launcher
+namespace desktops
 {
     namespace
     {
@@ -170,44 +170,44 @@ namespace desktops::launcher
             error = std::format(L"Windows cannot find '{}'.", input);
             return {};
         }
+    }
 
-        void report(const std::wstring& detail)
+    void Runner::report(const std::wstring& detail)
+    {
+        log::Warn(std::format(L"[launch] {}", detail));
+        MessageBoxW(nullptr, detail.c_str(), L"Run", MB_ICONWARNING | MB_TOPMOST | MB_TASKMODAL);
+    }
+
+    // The single doorway: CreateProcessW with lpDesktop. A success return is no
+    // arrival proof — onto a missing desktop it "succeeds" and the child dies
+    // within a second, and packaged-app aliases return a stub pid while the
+    // real window belongs to a different process — so arrival is judged by
+    // snapshot-diff: any window that was not on the desktop before the launch.
+    void Runner::start(const std::wstring& desktop, const std::wstring& command)
+    {
+        log::Info(std::format(L"[launch] command '{}'", command));
+        const std::vector<DWORD> before = DesktopWindowPids(desktop);
+        STARTUPINFOW si{ .cb = sizeof(si) };
+        si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
+        std::wstring mutableCommand = command;
+        wil::unique_process_information process;
+        if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE,
+                nullptr, nullptr, &si, &process))
         {
-            log::Warn(std::format(L"[launch] {}", detail));
-            MessageBoxW(nullptr, detail.c_str(), L"Run", MB_ICONWARNING | MB_TOPMOST | MB_TASKMODAL);
+            log::Err(std::format(L"[launch] CreateProcessW failed for '{}'", command), GetLastError());
+            report(std::format(L"'{}' could not be started (error {}).", command, GetLastError()));
+            return;
         }
 
-        // The single doorway: CreateProcessW with lpDesktop. A success return is no
-        // arrival proof — onto a missing desktop it "succeeds" and the child dies
-        // within a second, and packaged-app aliases return a stub pid while the
-        // real window belongs to a different process — so arrival is judged by
-        // snapshot-diff: any window that was not on the desktop before the launch.
-        void start(const std::wstring& desktop, const std::wstring& command)
+        log::Info(std::format(L"[launch] pid {} on '{}'", process.dwProcessId, desktop));
+        if (!ProbeNewWindow(desktop, before, kLandingProbeMs))
         {
-            log::Info(std::format(L"[launch] command '{}'", command));
-            const std::vector<DWORD> before = DesktopWindowPids(desktop);
-            STARTUPINFOW si{ .cb = sizeof(si) };
-            si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
-            std::wstring mutableCommand = command;
-            wil::unique_process_information process;
-            if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE,
-                    nullptr, nullptr, &si, &process))
-            {
-                log::Err(std::format(L"[launch] CreateProcessW failed for '{}'", command), GetLastError());
-                report(std::format(L"'{}' could not be started (error {}).", command, GetLastError()));
-                return;
-            }
-
-            log::Info(std::format(L"[launch] pid {} on '{}'", process.dwProcessId, desktop));
-            if (!ProbeNewWindow(desktop, before, kLandingProbeMs))
-            {
-                log::Warn(std::format(L"[launch] no new window on '{}' within {} ms", desktop, kLandingProbeMs));
-                report(std::format(L"'{}' started but did not show a window on the desktop.", command));
-            }
+            log::Warn(std::format(L"[launch] no new window on '{}' within {} ms", desktop, kLandingProbeMs));
+            report(std::format(L"'{}' started but did not show a window on the desktop.", command));
         }
     }
 
-    void launch(const std::wstring& desktop, const std::wstring& rawInput)
+    void Runner::Launch(const std::wstring& desktop, const std::wstring& rawInput)
     {
         const std::wstring input = trim(rawInput);
         if (input.empty())

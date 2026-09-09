@@ -9,8 +9,8 @@
 #include <wil/resource.h>
 
 #include "common.h"
-#include "launcher.h"
 #include "logging.h"
+#include "runner.h"
 #include "resource.h"
 #include "wilx/win32_helpers.h"
 
@@ -26,6 +26,7 @@ namespace desktops::satellite
         {
             std::wstring desktop;
             HWND panel;
+            Runner* runner;
         };
 
         // One satellite per thread; the context lives on the thread's stack and
@@ -68,7 +69,7 @@ namespace desktops::satellite
                 switch (LOWORD(wParam))
                 {
                 case IDOK:
-                    launcher::launch(context->desktop, wilx::TryGetWindowText(GetDlgItem(dialog, IDC_COMMAND)));
+                    context->runner->Launch(context->desktop, wilx::TryGetWindowText(GetDlgItem(dialog, IDC_COMMAND)));
                     return TRUE;
                 case IDC_BROWSE:
                     browse(dialog, GetDlgItem(dialog, IDC_COMMAND));
@@ -102,7 +103,8 @@ namespace desktops::satellite
                 return;
             }
 
-            DialogContext context{ std::move(desktop), panel };
+            Runner runner;
+            DialogContext context{ std::move(desktop), panel, &runner };
             t_context = &context;
             // CreateDialogParamW derives the dialog's desktop from this thread's attachment.
             HWND dialog = CreateDialogParamW(g_module, MAKEINTRESOURCEW(IDD_RUN), nullptr,
