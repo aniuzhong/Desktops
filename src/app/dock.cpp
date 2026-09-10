@@ -21,11 +21,13 @@
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <wil/resource.h>
 
 #include "wilx/desktop_windows.h"
+#include "wilx/win32_helpers.h"
 
 Q_LOGGING_CATEGORY(lcDock, "desktops.dock")
 
@@ -33,6 +35,8 @@ namespace
 {
     constexpr wchar_t kPowershellSuffix[] = L"\\WindowsPowerShell\\v1.0\\powershell.exe";
     constexpr wchar_t kExplorerSuffix[] = L"\\explorer.exe";
+    constexpr wchar_t kCmdSuffix[] = L"\\cmd.exe";
+    constexpr wchar_t kNotepadSuffix[] = L"\\notepad.exe";
 
     QString q(const std::wstring& text)
     {
@@ -148,12 +152,40 @@ namespace
         return result;
     }
 
-    QIcon stockIcon(SHSTOCKICONID id)
+    QIcon executableIcon(const std::wstring& executable)
     {
-        SHSTOCKICONINFO info{};
-        if (FAILED(::SHGetStockIconInfo(id, SHGSI_ICON | SHGSI_LARGEICON, &info)))
+        // The file must exist for its OWN icon (no SHGFI_USEFILEATTRIBUTES,
+        // which yields the generic exe icon).
+        SHFILEINFOW info{};
+        if (::SHGetFileInfoW(executable.c_str(), 0, &info, sizeof(info),
+                SHGFI_ICON | SHGFI_LARGEICON)
+            == 0)
             return {};
         return fromHIconHandle(info.hIcon);
+    }
+
+    // An icon baked into a DLL (shell32, imageres, ...) by resource id.
+    // Used for icons that don't come from an executable we can name a
+    // file for: the Win+R "Run" icon, e.g. imageres.dll,100.
+    QIcon resourceIcon(const std::wstring& path, int resourceId)
+    {
+        // Not `large`/`small`: the SDK's MIDL headers #define small as char.
+        HICON largeIcon = nullptr;
+        HICON smallIcon = nullptr;
+        const int extracted = ::ExtractIconExW(path.c_str(), -resourceId, &largeIcon,
+            &smallIcon, 1);
+        if (extracted <= 0 || !largeIcon)
+        {
+            if (largeIcon)
+                ::DestroyIcon(largeIcon);
+            if (smallIcon)
+                ::DestroyIcon(smallIcon);
+            return {};
+        }
+        QIcon icon = iconFromHicon(largeIcon);   // destroys largeIcon
+        if (smallIcon)
+            ::DestroyIcon(smallIcon);
+        return icon;
     }
 
     QIcon folderIcon()
@@ -184,18 +216,6 @@ namespace
         return QPixmap::fromImage(image);
     }
 
-    QIcon executableIcon(const std::wstring& executable)
-    {
-        // The file must exist for its OWN icon (no SHGFI_USEFILEATTRIBUTES,
-        // which yields the generic exe icon).
-        SHFILEINFOW info{};
-        if (::SHGetFileInfoW(executable.c_str(), 0, &info, sizeof(info),
-                SHGFI_ICON | SHGFI_LARGEICON)
-            == 0)
-            return {};
-        return fromHIconHandle(info.hIcon);
-    }
-
     // Splits complete '\n' lines out of the socket buffer, leaving any
     // remainder for the next readyRead.
     std::vector<QByteArray> takeLines(QByteArray& buffer)
@@ -209,16 +229,13 @@ namespace
         return lines;
     }
 
-    // Light theme, macOS-dock-shaped: a translucent rounded tray pinned
-    // to the bottom-center of the screen, icon-only buttons with hover
-    // tooltips. Win10 has no automatic corner rounding, so the tray is
-    // frameless + translucent with a rounded stylesheet; on non-default
-    // desktops DWM does not composite and the translucent base degrades
-    // to the stylesheet background. Created hidden: a fresh desktop is
-    // never auto-entered.
+    // Solid light tray (no transparency: on non-default desktops DWM does
+    // not composite and translucent backgrounds render invisible). Created
+    // hidden: a fresh desktop is never auto-entered.
     QWidget* composeDock(const QString& desktop, const std::function<void()>& onDefault,
-        const std::function<void()>& onConsole, const std::function<void()>& onExplorer,
-        const std::function<void()>& onOpen)
+        const std::function<void()>& onPowerShell, const std::function<void()>& onCmd,
+        const std::function<void()>& onNotepad, const std::function<void()>& onExplorer,
+        const std::function<void()>& onRun)
     {
         auto* dock = new QWidget;
         dock->setWindowTitle("Desktops - " + desktop);
@@ -248,11 +265,13 @@ namespace
             QObject::connect(button, &QAbstractButton::clicked, handler);
         };
         addButton(appSvgIcon(), "Default", onDefault);
-        addButton(executableIcon(systemDirectory() + kPowershellSuffix), "Console",
-            onConsole);
+        addButton(executableIcon(systemDirectory() + kPowershellSuffix), "PowerShell",
+            onPowerShell);
+        addButton(executableIcon(systemDirectory() + kCmdSuffix), "CMD", onCmd);
+        addButton(executableIcon(systemDirectory() + kNotepadSuffix), "NotePad", onNotepad);
         addButton(executableIcon(windowsDirectory() + kExplorerSuffix), "Explorer",
             onExplorer);
-        addButton(folderIcon(), "Open", onOpen);
+        addButton(resourceIcon(systemDirectory() + L"\\imageres.dll", 100), "Run", onRun);
         return dock;
     }
 
@@ -271,9 +290,22 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     // The process was launched with lpDesktop=<desktop>: this main
     // thread is already attached, so QApplication initializes on the
     // target desktop without any SetThreadDesktop.
+    //
+    // Disable IME/TSF BEFORE Qt initializes: text services on non-default
+    // desktops are half-broken (README Known Problems; they spawn a TSF
+    // thread + Cicero windows per desktop and correlate with the heap
+    // corruption in WER). Typing keeps working; only composition is lost,
+    // which never worked here anyway.
+    ::ImmDisableIME(0);
+
     QApplication app(argc, argv);
 
     const std::wstring desktopWide = stdW(desktop);
+    qCInfo(lcDock,
+        "dock starting: desktop='%s' pipe='%s' pid=%lu mainTid=%lu threadDesktop='%s' (verifies the lpDesktop attach)",
+        q(desktopWide).toUtf8().constData(), pipeName, ::GetCurrentProcessId(),
+        ::GetCurrentThreadId(),
+        q(wilx::TryGetThreadDesktopName()).toUtf8().constData());
     const wil::unique_hdesk desktopPin(
         ::OpenDesktopW(desktopWide.c_str(), 0, FALSE, GENERIC_ALL));
     if (!desktopPin)
@@ -292,28 +324,41 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         socket.write("\n", 1);
         socket.flush();
     };
+    // Launches run on detached workers: CreateProcessW onto a desktop can
+    // block for a long while and the dock's UI thread must never freeze
+    // behind it. Workers touch only their own copies and the thread-safe
+    // log.
+    const auto launchAsync = [desktopWide](const std::wstring& exe,
+        const std::wstring& args, DWORD creationFlags, const char* source) {
+        std::thread([desktopWide, exe, args, creationFlags, source] {
+            if (!launchExecutable(exe, args, desktopWide, creationFlags, source))
+                shellOpen(exe);   // not an executable: associations take over
+        }).detach();
+    };
     const auto onDefault = [&] {
         qCInfo(lcDock, "HOME pressed - requesting input back to Default");
         send(protocol::Home);
         if (dock)
             dock->hide();   // park immediately; the manager moves input
     };
-    const auto onConsole = [&] { launchExecutable(systemDirectory() + kPowershellSuffix,
-        L" -NoExit", desktopWide); };
-    const auto onExplorer = [&] {
-        launchExecutable(windowsDirectory() + kExplorerSuffix, L"", desktopWide);
+    const auto onPowerShell = [&] {
+        launchAsync(systemDirectory() + kPowershellSuffix, L" -NoExit", CREATE_NEW_CONSOLE, "btn:PowerShell");
     };
-    const auto onOpen = [&] {
+    const auto onCmd = [&] { launchAsync(systemDirectory() + kCmdSuffix, L"", CREATE_NEW_CONSOLE, "btn:CMD"); };
+    // GUI subsystem: no console (a console allocation on a shell-less
+    // desktop blocks CreateProcessW for ~30s).
+    const auto onNotepad = [&] { launchAsync(systemDirectory() + kNotepadSuffix, L"", 0, "btn:NotePad"); };
+    const auto onExplorer = [&] { launchAsync(windowsDirectory() + kExplorerSuffix, L"", 0, "btn:Explorer"); };
+    const auto onRun = [&] {
         const QString pick = QFileDialog::getOpenFileName(
             dock, QString(), QString(), "All files (*.*)");
         if (pick.isEmpty())
             return;
-        const std::wstring file = stdW(pick);
-        if (!launchExecutable(file, L"", desktopWide))
-            shellOpen(file);   // documents: associations are the system's
+        launchAsync(stdW(pick), L"", 0, "btn:Run-open");
     };
 
-    dock = composeDock(desktop, onDefault, onConsole, onExplorer, onOpen);
+    dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onExplorer,
+        onRun);
     positionAtBottomCenter(dock);
 
     socket.connectToServer(pipeName);
@@ -350,41 +395,63 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     });
     // The manager never drops the connection on purpose: if the pipe
     // dies the dock is an orphan with no exit path, so it quits.
-    QObject::connect(&socket, &QLocalSocket::disconnected, [&] { app.quit(); });
+    QObject::connect(&socket, &QLocalSocket::disconnected, [&] {
+        qCInfo(lcDock, "manager pipe disconnected (%s) - quitting",
+            socket.errorString().toUtf8().constData());
+        app.quit();
+    });
 
     const int code = app.exec();
+    qCInfo(lcDock, "dock for '%s' exiting with code %d",
+        q(desktopWide).toUtf8().constData(), code);
     delete dock;
     return code;
 }
 
 bool Dock::launchExecutable(const std::wstring& exe, const std::wstring& args,
-    const std::wstring& desktop)
+    const std::wstring& desktop, DWORD creationFlags, const char* source)
 {
+    // Forward slashes in the executable path: CreateProcessW normalizes
+    // them, and on this machine a backslash path combined with a
+    // non-default desktop crashes inside CreateProcessW (security-software
+    // path hooks are the prime suspect). Arguments are left untouched -
+    // their separators belong to the target program.
+    std::wstring normalizedExe = exe;
+    std::replace(normalizedExe.begin(), normalizedExe.end(), wchar_t(92), wchar_t(47));
+
     // Per-launch snapshot: a window here that was not here before.
     const std::vector<DWORD> before = desktopWindowPids(desktop);
     // Writable command-line buffer: CreateProcessW may rewrite it.
-    std::wstring command = L"\"" + exe + L"\"" + args;
+    std::wstring command = L"\"" + normalizedExe + L"\"" + args;
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
     PROCESS_INFORMATION pi{};
-    const bool ok = ::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
-        CREATE_NEW_CONSOLE, nullptr, nullptr, &si, &pi);
-    if (ok)
+    qCInfo(lcDock,
+        "[%s] CreateProcessW: exe='%s' args='%s' cmd='%s' lpDesktop='%s' flags=0x%lx "
+        "callerPid=%lu callerTid=%lu",
+        source, q(normalizedExe).toUtf8().constData(), q(args).toUtf8().constData(),
+        command.c_str(), desktop, creationFlags, ::GetCurrentProcessId(),
+        ::GetCurrentThreadId());
+    const ULONGLONG createStartedAt = ::GetTickCount64();
+    const BOOL ok = ::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
+        creationFlags, nullptr, nullptr, &si, &pi);
+    const unsigned long long createTook = ::GetTickCount64() - createStartedAt;
+    if (!ok)
     {
-        ::CloseHandle(pi.hThread);
-        ::CloseHandle(pi.hProcess);
-        if (newWindowArrived(desktop, before, 5000))
-            qCInfo(lcDock, "launch arrived: %ls", exe.c_str());
-        else
-            qCWarning(lcDock, "launched but no window appeared on the desktop within 5s");
+        qCWarning(lcDock, "[%s] CreateProcessW('%s') failed (%lu)",
+            source, q(exe).toUtf8().constData(), ::GetLastError());
+        return false;
     }
+    qCInfo(lcDock, "[%s] launched pid=%lu in %llums", source, pi.dwProcessId, createTook);
+    ::CloseHandle(pi.hThread);
+    ::CloseHandle(pi.hProcess);
+    const bool arrived = newWindowArrived(desktop, before, 5000);
+    if (arrived)
+        qCInfo(lcDock, "[%s] arrival ok", source);
     else
-    {
-        qCWarning(lcDock, "CreateProcessW('%s') failed (%lu)",
-            q(exe).toUtf8().constData(), ::GetLastError());
-    }
-    return ok;
+        qCWarning(lcDock, "[%s] no window arrived on the desktop within 5s", source);
+    return true;
 }
 
 void Dock::shellOpen(const std::wstring& file)

@@ -17,7 +17,7 @@ qt_add_executable(Desktops WIN32
     app.rc
 )
 target_include_directories(Desktops PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(Desktops PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg wilx)
+target_link_libraries(Desktops PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg wilx imm32)
 target_compile_features(Desktops PRIVATE cxx_std_23)
 target_compile_definitions(Desktops PRIVATE UNICODE _UNICODE _WINDOWS)
 target_compile_options(Desktops PRIVATE /W4 /utf-8)

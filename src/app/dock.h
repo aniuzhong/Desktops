@@ -1,5 +1,7 @@
 #pragma once
 
+#include <windows.h>
+
 #include <QString>
 #include <QLoggingCategory>
 
@@ -22,8 +24,9 @@ namespace protocol
     inline constexpr char Exit[] = "exit";          // shut down
 }
 
-// The dock process (main.cpp --dock <desktop> <pipe>): owns the four-
-// button dock (HOME / Console / Explorer / Open - no text input) on its
+// The dock process (main.cpp --dock <desktop> <pipe>): owns the six-
+// button dock (Default / PowerShell / CMD / NotePad / Explorer / Run -
+// no text input) on its
 // desktop and every launch performed from it. The process's main thread
 // starts on the target desktop via lpDesktop, so QApplication
 // initializes there without any SetThreadDesktop. Runs until the
@@ -45,8 +48,12 @@ private:
     // Targeted launch (CreateProcessW with lpDesktop), verified by the
     // arrival diff (per-launch snapshot: a window here that was not
     // here before - the launched process cannot handshake).
+    // `creationFlags` is per-application knowledge: a console app needs
+    // CREATE_NEW_CONSOLE, a GUI app must NOT get one (a console it never
+    // attaches to makes CreateProcessW block for ~30s on a desktop that
+    // has no shell).
     static bool launchExecutable(const std::wstring& exe, const std::wstring& args,
-        const std::wstring& desktop);
+        const std::wstring& desktop, DWORD creationFlags, const char* source);
 
     // Documents/URLs: ShellExecuteEx lands on the calling thread's
     // desktop (this process is attached); associations are the system's.
