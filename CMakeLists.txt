@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(VirtualDesktop VERSION 1.0.0.1 LANGUAGES CXX RC)
+project(Desktops VERSION 1.1.0.0 LANGUAGES CXX RC)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>)
@@ -14,17 +14,6 @@ FetchContent_Declare(WIL
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(WIL)
-
-set(SPDLOG_USE_STD_FORMAT ON)
-set(SPDLOG_BUILD_EXAMPLE OFF)
-set(SPDLOG_BUILD_TESTS OFF)
-set(SPDLOG_INSTALL OFF)
-FetchContent_Declare(spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog
-    GIT_TAG        v1.17.0
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(spdlog)
 
 enable_testing()
 

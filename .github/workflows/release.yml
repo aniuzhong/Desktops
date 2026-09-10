@@ -1,0 +1,89 @@
+# Desktops release pipeline.
+#
+# Build: static Qt (vcpkg manifest, baseline pinned in vcpkg.json) on
+# windows-latest. First run compiles qtbase (~1.5 h); the vcpkg binary cache
+# makes later runs fast.
+#
+# LGPLv3 compliance for the statically linked single exe: the source is this
+# public repository (relink/rebuild obligation satisfied), and the release
+# ships THIRD-PARTY-NOTICES.txt aggregated from every vcpkg dependency's
+# copyright file (the exe embeds all of them, not just Qt).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+    steps:
+      - name: Checkout Desktops
+        uses: actions/checkout@v4
+
+      - name: Checkout vcpkg at the pinned baseline
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: 3723ec118c8354290925feb58d021a9205a3e772
+          path: vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.bat
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/downloads
+            ~\AppData\Local\vcpkg\archives
+          key: vcpkg-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-x64-windows-static-
+
+      - name: Configure
+        run: cmake --preset static
+
+      - name: Build
+        run: cmake --build build-static --config Release --target Desktops
+
+      - name: Aggregate third-party notices
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          $notices = "stage/THIRD-PARTY-NOTICES.txt"
+          Get-ChildItem "vcpkg_installed/x64-windows-static/share" -Directory |
+            ForEach-Object {
+              $copyright = Join-Path $_.FullName "copyright"
+              if (Test-Path $copyright) {
+                Add-Content $notices "`n==== $($_.Name) ====`n"
+                Get-Content $copyright | Add-Content $notices
+              }
+            }
+
+      - name: Stage release artifacts
+        shell: pwsh
+        run: |
+          Copy-Item "build-static/Release/Desktops.exe" stage/
+          @"
+          Desktops - Windows virtual desktops (manager + per-desktop docks).
+          Contains Qt 6 (LGPLv3) and other vcpkg dependencies; see
+          THIRD-PARTY-NOTICES.txt. Source and build instructions: this repository
+          (cmake --preset static; cmake --build build-static --config Release).
+          "@ | Set-Content stage/README.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" --title "Desktops $env:GITHUB_REF_NAME" `
+            --notes "Single-exe build (static Qt). Source: this repository." `
+            stage/Desktops.exe stage/THIRD-PARTY-NOTICES.txt stage/README.txt

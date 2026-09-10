@@ -1,0 +1,27 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "static",
+            "displayName": "vcpkg static (single exe)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build-static",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "static-release",
+            "configurePreset": "static",
+            "configuration": "Release"
+        }
+    ]
+}

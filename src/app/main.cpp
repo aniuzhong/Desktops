@@ -1,58 +1,158 @@
-#include <format>
+// Desktops entry point. Two modes of the same exe:
+//   Desktops.exe                     - manager: panel + docking authority
+//   Desktops.exe --dock <name> <pipe> - per-desktop dock process
+#include <windows.h>
 
-#include <wil/resource.h>
+#include <QApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QMessageBox>
+#include <QMutex>
+#include <QStandardPaths>
+#include <QString>
 
-#include "logging.h"
-#include "manager.h"
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+#include "dock.h"
+#include "mainwindow.h"
 #include "wilx/win32_helpers.h"
 
-namespace {
+namespace
+{
+    QString sessionTag()
+    {
+        DWORD session = 0;
+        ::ProcessIdToSessionId(::GetCurrentProcessId(), &session);
+        return QString::number(session);
+    }
 
-constexpr wchar_t kMutexName[]   = L"Local\\VirtualDesktop_{44D28BCA-7F46-4af2-A1FF-36EE0DAC7CD2}";
-constexpr wchar_t kGoHomeEvent[] = L"Local\\VirtualDesktop_{44D28BCA-7F46-4af2-A1FF-36EE0DAC7CD2}-go-home";
+    QString instancePipe()
+    {
+        // Session-scoped, like the old Local\ mutex: fast user switching
+        // must not make two sessions recall each other.
+        return QString("Desktops-instance-%1").arg(sessionTag());
+    }
 
+    // The Qt message handler: a rotating log file under
+    // %LOCALAPPDATA%/Desktops/logs, shared by both process modes.
+    QString g_logPath;
+    QMutex g_logMutex;
+
+    const char* logLevelName(QtMsgType type)
+    {
+        switch (type)
+        {
+        case QtDebugMsg: return "debug";
+        case QtInfoMsg: return "info";
+        case QtWarningMsg: return "warn";
+        default: return "error";   // critical + fatal
+        }
+    }
+
+    void logHandler(QtMsgType type, const QMessageLogContext&, const QString& message)
+    {
+        QMutexLocker lock(&g_logMutex);
+        QFile file(g_logPath);
+        if (file.exists() && file.size() > 1024 * 1024)
+        {
+            QFile::remove(g_logPath + ".1");
+            QFile::rename(g_logPath, g_logPath + ".1");
+        }
+        if (!file.open(QIODevice::Append | QIODevice::Text))
+            return;
+        file.write(QString("[%1] [P%2 T%3] [%4] %5\n")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+            .arg(::GetCurrentProcessId())
+            .arg(::GetCurrentThreadId())
+            .arg(logLevelName(type), message)
+            .toUtf8());
+    }
+
+    void installLogging()
+    {
+        const QString dir = QStandardPaths::writableLocation(
+            QStandardPaths::AppLocalDataLocation) + "/logs";
+        QDir().mkpath(dir);
+        g_logPath = dir + "/desktops.log";
+        qInstallMessageHandler(logHandler);
+    }
 }  // namespace
 
-int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, _In_ int) {
-    desktops::log::Init();
-    desktops::log::Info(std::format(L"Application starting, pid {}", GetCurrentProcessId()));
+int main(int argc, char* argv[])
+{
+    // Light theme regardless of the system's dark-mode preference.
+    qputenv("QT_QPA_PLATFORM", "windows:darkmode=0");
 
-    // Session-scoped single instance. A second launch — from any desktop — is
-    // the go-home recall: signal the resident panel and exit.
-    wil::unique_mutex_nothrow instance_mutex;
-    bool already_exists = false;
-    if (!instance_mutex.try_create(kMutexName, 0, MUTEX_ALL_ACCESS, nullptr, &already_exists)) {
-        desktops::log::Warn(std::format(L"mutex unavailable (error {}), exiting", GetLastError()));
-        return 0;
+    if (argc >= 4 && std::strcmp(argv[1], "--dock") == 0)
+    {
+        QApplication app(argc, argv);
+        app.setApplicationName("Desktops");
+        installLogging();
+        return Dock::run(QString::fromLocal8Bit(argv[2]),
+            QString::fromLocal8Bit(argv[3]), argc, argv);
     }
-    if (already_exists) {
-        desktops::log::Info(L"instance already running; signaling go-home");
-        wil::unique_handle go_home(OpenEventW(EVENT_MODIFY_STATE, FALSE, kGoHomeEvent));
-        if (go_home) {
-            SetEvent(go_home.get());
+
+    QApplication app(argc, argv);
+    app.setApplicationName("Desktops");
+    app.setOrganizationName(QString());
+    installLogging();
+    qInfo("manager starting, pid %lu", ::GetCurrentProcessId());
+
+    // Single instance: an existing manager receives "home" and recalls the
+    // user; this launch exits.
+    {
+        QLocalSocket probe;
+        probe.connectToServer(instancePipe());
+        if (probe.waitForConnected(300))
+        {
+            probe.write(protocol::Home);
+            probe.write("\n");
+            probe.flush();
+            probe.waitForBytesWritten(500);
+            return 0;
         }
+    }
+
+    // The panel lives on Default only: launched from elsewhere is a refusal,
+    // never a relocation.
+    const std::wstring threadDesktop = wilx::TryGetThreadDesktopName();
+    if (_wcsicmp(threadDesktop.c_str(), L"Default") != 0)
+    {
+        qWarning("launched on '%ls', refusing", threadDesktop.c_str());
+        QMessageBox::information(nullptr, "Desktops",
+            "Desktops runs on the Default desktop.\n"
+            "Switch back to Default and start it there.");
         return 0;
     }
 
-    // The panel lives on Default only. Launching from elsewhere is a refusal,
-    // never a relocation — the user sees the box on the desktop they are on.
-    const std::wstring thread_desktop = wilx::TryGetThreadDesktopName();
-    if (_wcsicmp(thread_desktop.c_str(), L"Default") != 0) {
-        desktops::log::Warn(std::format(L"launched on '{}', refusing", thread_desktop));
-        MessageBoxW(nullptr,
-                    L"Virtual Desktop runs on the Default desktop.\nSwitch back to "
-                    L"Default and start it there.",
-                    L"Virtual Desktop", MB_ICONINFORMATION | MB_TOPMOST | MB_TASKMODAL);
-        return 0;
-    }
-
-    wil::unique_handle go_home(CreateEventW(nullptr, FALSE, FALSE, kGoHomeEvent));
-    if (!go_home) {
-        desktops::log::Err(L"[startup] go-home event creation failed", GetLastError());
+    QLocalServer::removeServer(instancePipe());
+    QLocalServer instanceServer;
+    if (!instanceServer.listen(instancePipe()))
+    {
+        qCritical("instance pipe listen failed: %s",
+            instanceServer.errorString().toUtf8().constData());
         return -1;
     }
 
-    const int exit_code = desktops::Manager::Run(instance, go_home.get());
-    desktops::log::Info(std::format(L"Exiting with {}", exit_code));
-    return exit_code;
+    MainWindow window(sessionTag());
+    window.show();
+
+    // Second instance = go-home recall.
+    QObject::connect(&instanceServer, &QLocalServer::newConnection, [&] {
+        if (QLocalSocket* connection = instanceServer.nextPendingConnection())
+        {
+            QObject::connect(connection, &QLocalSocket::readyRead, [connection, &window] {
+                if (QString::fromUtf8(connection->readAll()).contains(protocol::Home))
+                    window.goHome();
+                connection->disconnectFromServer();
+            });
+        }
+    });
+
+    return app.exec();
 }
