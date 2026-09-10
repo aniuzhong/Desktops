@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Desktops VERSION 1.1.0.0 LANGUAGES CXX RC)
+project(Desktops VERSION 0.1.0.0 LANGUAGES CXX RC)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>)
