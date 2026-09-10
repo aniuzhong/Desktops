@@ -223,14 +223,13 @@ namespace
         auto* dock = new QWidget;
         dock->setWindowTitle("Desktops - " + desktop);
         dock->setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
-        dock->setAttribute(Qt::WA_TranslucentBackground);
         dock->setStyleSheet(
-            "QWidget { background: rgba(243, 243, 243, 216);"
+            "QWidget { background: #E2E8F0;"
             "  border-radius: 18px; }"
-            "QToolButton { background: #ffffff; border: 1px solid #d9d9d9;"
+            "QToolButton { background: #F8FAFC; border: 1px solid #CBD5E1;"
             "  border-radius: 12px; min-width: 72px; min-height: 72px; }"
-            "QToolButton:hover { background: #e8f0fe; border-color: #9ab8e8; }"
-            "QToolButton:pressed { background: #d7e3fa; }");
+            "QToolButton:hover { background: #F1F5F9; border-color: #94A3B8; }"
+            "QToolButton:pressed { background: #E2E8F0; }");
 
         auto* row = new QHBoxLayout(dock);
         row->setContentsMargins(20, 16, 20, 16);
