@@ -1,5 +1,6 @@
 <RCC>
     <qresource>
         <file>resources/desktops.svg</file>
+        <file>resources/dock.qss</file>
     </qresource>
 </RCC>

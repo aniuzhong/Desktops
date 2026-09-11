@@ -87,7 +87,7 @@ jobs:
         run: |
           Copy-Item "build-static/Release/Desktops.exe" stage/
           @"
-          Desktops - Windows virtual desktops (manager + per-desktop docks).
+          Desktops - Windows desktops.
           Contains Qt 6 (LGPLv3) and other vcpkg dependencies; see
           THIRD-PARTY-NOTICES.txt. Source and build instructions: this repository
           (cmake --preset static; cmake --build build-static --config Release).
