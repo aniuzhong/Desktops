@@ -44,17 +44,23 @@ public:
     // the desktop this process was launched on.
     static int run(const QString& desktop, const QString& pipeName, int argc, char** argv);
 
-private:
-    // Targeted launch (CreateProcessW with lpDesktop), verified by the
-    // arrival diff (per-launch snapshot: a window here that was not
-    // here before - the launched process cannot handshake).
-    // `creationFlags` is per-application knowledge: a console app needs
-    // CREATE_NEW_CONSOLE, a GUI app must NOT get one (a console it never
-    // attaches to makes CreateProcessW block for ~30s on a desktop that
-    // has no shell).
-    static bool launchExecutable(const std::wstring& exe, const std::wstring& args,
-        const std::wstring& desktop, DWORD creationFlags, const char* source);
+    // Per-app cross-desktop launches. Cross-desktop process creation has
+    // app-specific failure modes on this machine, so each function below
+    // carries exactly one app's worth of launch knowledge - console or
+    // GUI, arguments, and the path spelling that survives here; the
+    // evidence sits with the definition. A/B testing an app means
+    // changing that one function.
+    static bool launchCMD(const std::wstring& desktop, const char* source);
+    static bool launchPowershell5(const std::wstring& desktop, const char* source);
+    static bool launchNotePad(const std::wstring& desktop, const char* source);
+    static bool launchExplorer(const std::wstring& desktop, const char* source);
 
+    // No app knowledge: verbatim path, caller supplies everything. The
+    // shell-open fallback (associations) covers non-executables.
+    static bool launch(const std::wstring& exe, const std::wstring& args,
+                       const std::wstring& desktop, DWORD creationFlags, const char* source);
+
+private:
     // Documents/URLs: ShellExecuteEx lands on the calling thread's
     // desktop (this process is attached); associations are the system's.
     static void shellOpen(const std::wstring& file);

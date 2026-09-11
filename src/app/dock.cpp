@@ -19,6 +19,7 @@
 #include <QPainter>
 
 #include <algorithm>
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <thread>
@@ -27,6 +28,7 @@
 #include <wil/resource.h>
 
 #include "wilx/desktop_windows.h"
+#include "wilx/toolhelp.h"
 #include "wilx/win32_helpers.h"
 
 Q_LOGGING_CATEGORY(lcDock, "desktops.dock")
@@ -63,6 +65,12 @@ namespace
         return path;
     }
 
+    std::wstring forwardSlashed(std::wstring path)
+    {
+        std::replace(path.begin(), path.end(), wchar_t(92), wchar_t(47));
+        return path;
+    }
+
     // PIDs owning top-level windows on the desktop (arrival diff input).
     std::vector<DWORD> desktopWindowPids(HDESK desktop)
     {
@@ -82,28 +90,70 @@ namespace
         return handle ? desktopWindowPids(handle.get()) : std::vector<DWORD> {};
     }
 
+    // Toolhelp parent of pid, or 0 when unanswerable (already reaped, or
+    // the snapshot failed).
+    DWORD parentPid(DWORD pid)
+    {
+        DWORD parent = 0;
+        wilx::for_each_process([&](const PROCESSENTRY32W& entry) {
+            if (entry.th32ProcessID == pid)
+            {
+                parent = entry.th32ParentProcessID;
+                return false;
+            }
+            return true;
+        });
+        return parent;
+    }
+
+    // Disposition of a launch that never produced a window: still running
+    // or the exit code, the only trace left on a desktop no one can see.
+    std::string processExitState(DWORD pid)
+    {
+        wil::unique_handle process(
+            ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+        if (!process)
+            return "already exited";
+        DWORD code = 0;
+        if (!::GetExitCodeProcess(process.get(), &code))
+            return "exit code unavailable";
+        if (code == STILL_ACTIVE)
+            return "still running";
+        char text[48];
+        std::snprintf(text, sizeof(text), "exited with code %lu", code);
+        return text;
+    }
+
     // Arrival proof for launches: the launched process cannot handshake,
-    // so a window whose pid was not here before is the only verdict.
-    bool newWindowArrived(HDESK desktop, const std::vector<DWORD>& before, unsigned timeoutMs)
+    // so the verdict is a window whose pid was not here before and that
+    // the launch owns - the process itself, or its console host (a console
+    // window belongs to conhost.exe, whose parent is the launched
+    // process). Strict ownership keeps overlapping launches from claiming
+    // each other's windows.
+    bool newWindowArrived(HDESK desktop, const std::vector<DWORD>& before,
+        DWORD launchedPid, unsigned timeoutMs)
     {
         const ULONGLONG deadline = ::GetTickCount64() + timeoutMs;
         for (;;)
         {
-            const auto pids = desktopWindowPids(desktop);
-            const bool arrived = std::any_of(pids.begin(), pids.end(), [&](DWORD pid) {
-                return std::find(before.begin(), before.end(), pid) == before.end();
-            });
-            if (arrived || ::GetTickCount64() >= deadline)
-                return arrived;
+            for (DWORD pid : desktopWindowPids(desktop))
+            {
+                if (std::find(before.begin(), before.end(), pid) != before.end())
+                    continue;
+                if (pid == launchedPid || parentPid(pid) == launchedPid)
+                    return true;
+            }
+            if (::GetTickCount64() >= deadline)
+                return false;
             ::Sleep(100);
         }
     }
 
     bool newWindowArrived(const std::wstring& name, const std::vector<DWORD>& before,
-        unsigned timeoutMs)
+        DWORD launchedPid, unsigned timeoutMs)
     {
         wil::unique_hdesk handle(::OpenDesktopW(name.c_str(), 0, FALSE, DESKTOP_READOBJECTS));
-        return handle && newWindowArrived(handle.get(), before, timeoutMs);
+        return handle && newWindowArrived(handle.get(), before, launchedPid, timeoutMs);
     }
 
     // HICON -> QIcon without QtWinExtras (dropped in Qt 6): pull the
@@ -303,7 +353,8 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     const std::wstring desktopWide = stdW(desktop);
     qCInfo(lcDock,
         "dock starting: desktop='%s' pipe='%s' pid=%lu mainTid=%lu threadDesktop='%s' (verifies the lpDesktop attach)",
-        q(desktopWide).toUtf8().constData(), pipeName, ::GetCurrentProcessId(),
+        q(desktopWide).toUtf8().constData(), pipeName.toUtf8().constData(),
+        ::GetCurrentProcessId(),
         ::GetCurrentThreadId(),
         q(wilx::TryGetThreadDesktopName()).toUtf8().constData());
     const wil::unique_hdesk desktopPin(
@@ -327,11 +378,19 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     // Launches run on detached workers: CreateProcessW onto a desktop can
     // block for a long while and the dock's UI thread must never freeze
     // behind it. Workers touch only their own copies and the thread-safe
-    // log.
-    const auto launchAsync = [desktopWide](const std::wstring& exe,
+    // log. Known-app buttons carry no launch knowledge here - their
+    // launchXxx function is the knowledge; the Run dialog goes through
+    // the app-free launch with the shell-open fallback.
+    using KnownLaunch = bool (*)(const std::wstring& desktop, const char* source);
+    const auto launchDetached = [desktopWide](KnownLaunch launch, const char* source) {
+        std::thread([desktopWide, source, launch] {
+            launch(desktopWide, source);
+        }).detach();
+    };
+    const auto launchDetachedUnknown = [desktopWide](const std::wstring& exe,
         const std::wstring& args, DWORD creationFlags, const char* source) {
         std::thread([desktopWide, exe, args, creationFlags, source] {
-            if (!launchExecutable(exe, args, desktopWide, creationFlags, source))
+            if (!launch(exe, args, desktopWide, creationFlags, source))
                 shellOpen(exe);   // not an executable: associations take over
         }).detach();
     };
@@ -342,19 +401,23 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
             dock->hide();   // park immediately; the manager moves input
     };
     const auto onPowerShell = [&] {
-        launchAsync(systemDirectory() + kPowershellSuffix, L" -NoExit", CREATE_NEW_CONSOLE, "btn:PowerShell");
+        launchDetached(Dock::launchPowershell5, "btn:PowerShell");
     };
-    const auto onCmd = [&] { launchAsync(systemDirectory() + kCmdSuffix, L"", CREATE_NEW_CONSOLE, "btn:CMD"); };
-    // GUI subsystem: no console (a console allocation on a shell-less
-    // desktop blocks CreateProcessW for ~30s).
-    const auto onNotepad = [&] { launchAsync(systemDirectory() + kNotepadSuffix, L"", 0, "btn:NotePad"); };
-    const auto onExplorer = [&] { launchAsync(windowsDirectory() + kExplorerSuffix, L"", 0, "btn:Explorer"); };
+    const auto onCmd = [&] {
+        launchDetached(Dock::launchCMD, "btn:CMD");
+    };
+    const auto onNotepad = [&] {
+        launchDetached(Dock::launchNotePad, "btn:NotePad");
+    };
+    const auto onExplorer = [&] {
+        launchDetached(Dock::launchExplorer, "btn:Explorer");
+    };
     const auto onRun = [&] {
         const QString pick = QFileDialog::getOpenFileName(
             dock, QString(), QString(), "All files (*.*)");
         if (pick.isEmpty())
             return;
-        launchAsync(stdW(pick), L"", 0, "btn:Run-open");
+        launchDetachedUnknown(stdW(pick), L"", 0, "btn:Run-open");
     };
 
     dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onExplorer,
@@ -408,21 +471,56 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     return code;
 }
 
-bool Dock::launchExecutable(const std::wstring& exe, const std::wstring& args,
+bool Dock::launchCMD(const std::wstring& desktop, const char* source)
+{
+    // Console app. The path must stay backslash-spelled: a forward-slash
+    // command line makes cmd.exe exit at once (code 1) and windowless -
+    // seen on the 10:09 and 10:31 sessions and reproduced on the Default
+    // desktop, so plain cmd behavior, not a desktop effect.
+    return launch(systemDirectory() + kCmdSuffix, L"", desktop,
+        CREATE_NEW_CONSOLE, source);
+}
+
+bool Dock::launchPowershell5(const std::wstring& desktop, const char* source)
+{
+    // Console app; -NoExit keeps the window up. Launches under either
+    // spelling - backslash kept as the one with the longer track record
+    // (10:57, 11:40 sessions).
+    return launch(systemDirectory() + kPowershellSuffix, L" -NoExit", desktop,
+        CREATE_NEW_CONSOLE, source);
+}
+
+bool Dock::launchNotePad(const std::wstring& desktop, const char* source)
+{
+    // GUI app: no console flags (a console it never attaches to makes
+    // CreateProcessW block for ~30s on a shell-less desktop).
+    // Path MUST be forward-slash-spelled on this machine: Huorong's
+    // behavior engine (when running) blocks the backslash spelling -
+    // NtCreateUserProcess never returns, every dock thread gets
+    // suspended from outside, and the dock is silently terminated
+    // ~35-76s later (10:57, 11:59, 12:04 wedges; 12:26 clean with
+    // Huorong off). The forward-slash command line does not match the
+    // engine's pattern and sails through.
+    return launch(forwardSlashed(systemDirectory() + kNotepadSuffix), L"",
+        desktop, 0, source);
+}
+
+bool Dock::launchExplorer(const std::wstring& desktop, const char* source)
+{
+    // GUI app, no console flags; forward slash like NotePad - explorer
+    // has never launched any other way from here.
+    return launch(forwardSlashed(windowsDirectory() + kExplorerSuffix), L"",
+        desktop, 0, source);
+}
+
+bool Dock::launch(const std::wstring& exe, const std::wstring& args,
     const std::wstring& desktop, DWORD creationFlags, const char* source)
 {
-    // Forward slashes in the executable path: CreateProcessW normalizes
-    // them, and on this machine a backslash path combined with a
-    // non-default desktop crashes inside CreateProcessW (security-software
-    // path hooks are the prime suspect). Arguments are left untouched -
-    // their separators belong to the target program.
-    std::wstring normalizedExe = exe;
-    std::replace(normalizedExe.begin(), normalizedExe.end(), wchar_t(92), wchar_t(47));
-
-    // Per-launch snapshot: a window here that was not here before.
+    // The app-free core: the path arrives exactly as the caller chose to
+    // spell it, and `creationFlags` is caller knowledge too.
     const std::vector<DWORD> before = desktopWindowPids(desktop);
     // Writable command-line buffer: CreateProcessW may rewrite it.
-    std::wstring command = L"\"" + normalizedExe + L"\"" + args;
+    std::wstring command = L"\"" + exe + L"\"" + args;
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
@@ -430,9 +528,9 @@ bool Dock::launchExecutable(const std::wstring& exe, const std::wstring& args,
     qCInfo(lcDock,
         "[%s] CreateProcessW: exe='%s' args='%s' cmd='%s' lpDesktop='%s' flags=0x%lx "
         "callerPid=%lu callerTid=%lu",
-        source, q(normalizedExe).toUtf8().constData(), q(args).toUtf8().constData(),
-        command.c_str(), desktop, creationFlags, ::GetCurrentProcessId(),
-        ::GetCurrentThreadId());
+        source, q(exe).toUtf8().constData(), q(args).toUtf8().constData(),
+        q(command).toUtf8().constData(), q(desktop).toUtf8().constData(),
+        creationFlags, ::GetCurrentProcessId(), ::GetCurrentThreadId());
     const ULONGLONG createStartedAt = ::GetTickCount64();
     const BOOL ok = ::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
         creationFlags, nullptr, nullptr, &si, &pi);
@@ -446,11 +544,12 @@ bool Dock::launchExecutable(const std::wstring& exe, const std::wstring& args,
     qCInfo(lcDock, "[%s] launched pid=%lu in %llums", source, pi.dwProcessId, createTook);
     ::CloseHandle(pi.hThread);
     ::CloseHandle(pi.hProcess);
-    const bool arrived = newWindowArrived(desktop, before, 5000);
+    const bool arrived = newWindowArrived(desktop, before, pi.dwProcessId, 5000);
     if (arrived)
         qCInfo(lcDock, "[%s] arrival ok", source);
     else
-        qCWarning(lcDock, "[%s] no window arrived on the desktop within 5s", source);
+        qCWarning(lcDock, "[%s] no window arrived on the desktop within 5s (pid=%lu %s)",
+            source, pi.dwProcessId, processExitState(pi.dwProcessId).c_str());
     return true;
 }
 
