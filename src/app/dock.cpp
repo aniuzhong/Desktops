@@ -28,6 +28,7 @@
 
 #include <wil/resource.h>
 
+#include "wallpaper.h"
 #include "wilx/desktop_windows.h"
 #include "wilx/toolhelp.h"
 #include "wilx/win32_helpers.h"
@@ -321,12 +322,10 @@ namespace
             QObject::connect(button, &QAbstractButton::clicked, handler);
         };
         addButton(appSvgIcon(), "Default", onDefault);
-        addButton(executableIcon(systemDirectory() + kPowershellSuffix), "PowerShell",
-            onPowerShell);
+        addButton(executableIcon(systemDirectory() + kPowershellSuffix), "PowerShell", onPowerShell);
         addButton(executableIcon(systemDirectory() + kCmdSuffix), "CMD", onCmd);
         addButton(executableIcon(systemDirectory() + kNotepadSuffix), "NotePad", onNotepad);
-        addButton(executableIcon(windowsDirectory() + kExplorerSuffix), "Explorer",
-            onExplorer);
+        addButton(executableIcon(windowsDirectory() + kExplorerSuffix), "Explorer", onExplorer);
         addButton(resourceIcon(systemDirectory() + L"\\imageres.dll", 100), "Run", onRun);
         return dock;
     }
@@ -374,6 +373,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
 
     QLocalSocket socket;
     QByteArray inbox;
+    QWidget* wallpaper = nullptr;
     QWidget* dock = nullptr;
 
     const auto send = [&socket](const char* token) {
@@ -426,6 +426,13 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         launchDetachedUnknown(stdW(pick), L"", 0, "btn:Run-open");
     };
 
+    // Wallpaper first so the dock, created after it, sits above it. Unlike
+    // the dock it is shown at birth and never hidden: it is only ever
+    // background, so it needs no park/activate handling.
+    wallpaper = composeWallpaper();
+    if (wallpaper)
+        wallpaper->show();
+
     dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onExplorer,
         onRun);
     positionAtBottomCenter(dock);
@@ -435,6 +442,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     {
         qCCritical(lcDock, "manager pipe connect failed: %s",
             socket.errorString().toUtf8().constData());
+        delete wallpaper;
         delete dock;
         return 2;
     }
@@ -473,6 +481,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     const int code = app.exec();
     qCInfo(lcDock, "dock for '%s' exiting with code %d",
         q(desktopWide).toUtf8().constData(), code);
+    delete wallpaper;
     delete dock;
     return code;
 }

@@ -11,8 +11,10 @@ qt_add_executable(Desktops WIN32
     main.cpp
     mainwindow.cpp
     dock.cpp
+    wallpaper.cpp
     mainwindow.h
     dock.h
+    wallpaper.h
     desktops.qrc
     app.rc
 )
