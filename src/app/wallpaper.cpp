@@ -32,8 +32,10 @@ Wallpaper::Wallpaper(const QPixmap& image, const QRect& screen)
           Qt::SmoothTransformation))
 {
     // Tool: no taskbar button, no Alt+Tab entry. NoAcceptFocus and
-    // TransparentForInput together mean a click can never raise it, so it
-    // stays behind every app window with no Z-order policing.
+    // TransparentForInput together mean a click can never raise it.
+    // Staying behind every app window is not automatic on a shell-less
+    // desktop (this window was once found above the dock bar), so the
+    // caller sinks it at birth and the dock bar pins itself topmost.
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowDoesNotAcceptFocus |
         Qt::WindowTransparentForInput);
     setGeometry(screen);

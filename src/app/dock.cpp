@@ -294,6 +294,14 @@ namespace
     // desktops have no shell.
     //
     // DoesNotAcceptFocus alone: showing the bar never moves the keyboard.
+    //
+    // StaysOnTop: the bar is a taskbar (Shell_TrayWnd is topmost too), and
+    // the topmost band is per-desktop, so this cannot leak anywhere else.
+    // Without it the bar was once found buried under the full-screen
+    // wallpaper - alive, vis=Y, right rect, no owner - after a launched
+    // console window closed and the window manager rearranged the
+    // desktop's z-order; with every window NoActivate, nothing re-raised
+    // the bar.
     QWidget* composeDock(const QString& desktop, const std::function<void()>& onDefault,
         const std::function<void()>& onPowerShell, const std::function<void()>& onCmd,
         const std::function<void()>& onNotepad,
@@ -302,7 +310,7 @@ namespace
         auto* dock = new QWidget;
         dock->setWindowTitle("Desktops - " + desktop);
         dock->setWindowFlags(Qt::FramelessWindowHint | Qt::Window |
-            Qt::WindowDoesNotAcceptFocus);
+            Qt::WindowDoesNotAcceptFocus | Qt::WindowStaysOnTopHint);
         dock->setFixedHeight(kBarHeight);
         dock->setStyleSheet(dockStyleSheet());
 
@@ -436,12 +444,17 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         launchDetachedUnknown(stdW(pick), L"", 0, "btn:Run-open");
     };
 
-    // Wallpaper first so the dock, created after it, sits above it. Unlike
-    // the dock it is shown at birth and never hidden: it is only ever
-    // background, so it needs no park/activate handling.
+    // Wallpaper first. Unlike the dock it is shown at birth and never
+    // hidden: it is only ever background, so it needs no park/activate
+    // handling. The explicit sink makes that permanent - desktop z-order
+    // rearranges itself when launched app windows come and go (the
+    // wallpaper was once found above the dock bar; see composeDock).
     wallpaper = composeWallpaper();
     if (wallpaper)
+    {
         wallpaper->show();
+        wallpaper->lower();
+    }
 
     dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onRun);
     positionAlongBottom(dock);
@@ -462,6 +475,9 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         inbox += socket.readAll();
         for (const QByteArray& line : takeLines(inbox))
         {
+            // Every instruction is logged: when the bar once vanished, the
+            // absence of a logged Park/Exit was the only clue there was.
+            qCInfo(lcDock, "manager sent '%s'", line.constData());
             if (line == protocol::Activate && dock)
             {
                 // No activateWindow(): the bar must not take focus, so
