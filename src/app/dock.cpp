@@ -41,9 +41,9 @@ namespace
     constexpr wchar_t kCmdSuffix[] = L"\\cmd.exe";
     constexpr wchar_t kNotepadSuffix[] = L"\\notepad.exe";
 
-    // Bar geometry. The height is fixed so the layout and the positioning
-    // maths agree on one number; kIconSize is 1:1 with the shell's large
-    // icon (SHGFI_LARGEICON), so icons are never upscaled.
+    // The fixed height keeps the layout and the positioning maths on one
+    // number; kIconSize is 1:1 with the shell's large icon (SHGFI_LARGEICON),
+    // so icons are never upscaled.
     constexpr int kBarHeight = 48;
     constexpr int kButtonSize = 40;
     constexpr int kIconSize = 32;
@@ -72,7 +72,6 @@ namespace
         return path;
     }
 
-    // PIDs owning top-level windows on the desktop (arrival diff input).
     std::vector<DWORD> desktopWindowPids(HDESK desktop)
     {
         std::vector<DWORD> pids;
@@ -159,7 +158,7 @@ namespace
 
     // HICON -> QIcon without QtWinExtras (dropped in Qt 6): pull the
     // 32bpp color bitmap via GetDIBits and wrap it in a QPixmap.
-    // Ownership stays with the caller (DestroyIcon after wrapping).
+    // Destroys `icon` on the way out: the bits are copied into the QImage.
     QIcon iconFromHicon(HICON icon)
     {
         ICONINFO info{};
@@ -215,9 +214,8 @@ namespace
         return fromHIconHandle(info.hIcon);
     }
 
-    // An icon baked into a DLL (shell32, imageres, ...) by resource id.
-    // Used for icons that don't come from an executable we can name a
-    // file for: the Win+R "Run" icon, e.g. imageres.dll,100.
+    // For icons with no executable file to name: the Win+R "Run" icon,
+    // e.g. imageres.dll,100.
     QIcon resourceIcon(const std::wstring& path, int resourceId)
     {
         // Not `large`/`small`: the SDK's MIDL headers #define small as char.
@@ -255,8 +253,6 @@ namespace
         return QPixmap::fromImage(image);
     }
 
-    // Splits complete '\n' lines out of the socket buffer, leaving any
-    // remainder for the next readyRead.
     std::vector<QByteArray> takeLines(QByteArray& buffer)
     {
         std::vector<QByteArray> lines;
@@ -268,8 +264,7 @@ namespace
         return lines;
     }
 
-    // The dock's look lives in resources/dock.qss, compiled into the exe
-    // by desktops.qrc; the file carries the rationale behind the colours.
+    // resources/dock.qss carries the rationale behind the colours.
     QString dockStyleSheet()
     {
         QFile file(QStringLiteral(":/resources/dock.qss"));

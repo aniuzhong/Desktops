@@ -75,7 +75,6 @@ namespace wilx
     return true;
 }
 
-//! Accepts HDESK and HWINSTA alike.
 [[nodiscard]] inline std::wstring TryGetUserObjectName(_In_ HANDLE userObject)
 {
     std::wstring name;

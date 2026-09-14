@@ -8,33 +8,27 @@
 #include <string>
 #include <vector>
 
-// Line-based QLocalSocket protocol between the manager (panel process) and
-// a dock process. One ASCII token per message, '\n'-terminated on the wire;
-// each side buffers and splits on '\n'. The protocol lives with the dock:
-// the dock defines it, the manager speaks it.
+// One ASCII token per message, '\n'-terminated on the wire; each side
+// buffers and splits on '\n'. The protocol lives with the dock: the dock
+// defines it, the manager speaks it.
 namespace protocol
 {
     // dock -> manager
-    inline constexpr char Ready[] = "ready";    // dock attached; dock widget exists
-    inline constexpr char Home[] = "home";      // user pressed HOME on the dock
+    inline constexpr char Ready[] = "ready";
+    inline constexpr char Home[] = "home";
 
-    // manager -> dock
-    inline constexpr char Activate[] = "activate";  // input desktop moved here: show + raise
-    inline constexpr char Park[] = "park";          // input desktop moved away: hide, keep running
-    inline constexpr char Exit[] = "exit";          // shut down
+    // manager -> dock: Activate when the input desktop moved here, Park
+    // when it moved away (hide, keep running), Exit to shut down.
+    inline constexpr char Activate[] = "activate";
+    inline constexpr char Park[] = "park";
+    inline constexpr char Exit[] = "exit";
 }
 
-// The dock process (main.cpp --dock <desktop> <pipe>): owns the six-
-// button dock (Default / PowerShell / CMD / NotePad / Run -
-// no text input) on its
-// desktop and every launch performed from it. The process's main thread
-// starts on the target desktop via lpDesktop, so QApplication
-// initializes there without any SetThreadDesktop. Runs until the
-// manager sends Exit; HOME is a request ("home"), never self-destruction.
-//
-// Communication is line-based over QLocalSocket (protocol above):
-//   dock -> manager: Ready, Home
-//   manager -> dock: Activate (show + raise), Park (hide), Exit
+// The dock process (main.cpp --dock <desktop> <pipe>): owns the dock bar
+// and every launch performed from it. The process's main thread starts on
+// the target desktop via lpDesktop, so QApplication initializes there
+// without any SetThreadDesktop. Runs until the manager sends Exit; HOME is
+// a request ("home"), never self-destruction.
 class Dock
 {
 public:

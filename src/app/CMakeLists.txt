@@ -1,5 +1,5 @@
 # The Desktops application: manager (panel process) + per-desktop dock
-# processes (same exe, --dock mode). See doc/simplified-plan.md.
+# processes (same exe, --dock mode).
 set(DESKTOPS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/desktops.ico")
 configure_file(app.rc.in app.rc @ONLY)
 

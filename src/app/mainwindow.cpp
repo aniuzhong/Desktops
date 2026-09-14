@@ -36,9 +36,6 @@ namespace
             static_cast<size_t>(text.size()));
     }
 
-    // Desktops of the process's window station minus Default/Winlogon/
-    // Disconnect, sorted case-insensitively. A desktop is listed only
-    // when it opens with DESKTOP_SWITCHDESKTOP | DESKTOP_READOBJECTS.
     std::vector<std::wstring> listExtraDesktops()
     {
         std::vector<std::wstring> names;
@@ -63,7 +60,6 @@ namespace
         return names;
     }
 
-    // OpenDesktopW(DESKTOP_SWITCHDESKTOP) + SwitchDesktop.
     bool switchInputTo(const std::wstring& name)
     {
         qCInfo(lcPanel, "moving input desktop to '%s'", q(name).toUtf8().constData());
@@ -352,9 +348,7 @@ void MainWindow::refreshList()
 {
     const std::vector<std::wstring> extras = listExtraDesktops();
 
-    // Align: drop registry entries whose desktop no longer exists, adopt
-    // extras that have no dock yet. dropDock erases from docks_, so the
-    // drop list is collected first.
+    // dropDock erases from docks_, so the drop list is collected first.
     std::vector<std::wstring> toDrop;
     for (auto& [name, entry] : docks_)
     {

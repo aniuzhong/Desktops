@@ -16,7 +16,7 @@
 
 int main()
 {
-    // TryGet* total fail-soft: empty == failure, never an exception.
+    // TryGet* is total fail-soft: empty == failure, never an exception.
     CHECK(!wilx::TryGetWin32ErrorMessage(ERROR_FILE_NOT_FOUND).empty());
     CHECK(wilx::TryGetUtf8String(L"").empty());
     CHECK(wilx::TryGetUtf8String(L"abc") == "abc");
@@ -26,20 +26,17 @@ int main()
     CHECK(!wilx::TryGetUserObjectName(GetProcessWindowStation()).empty());
     CHECK(!wilx::TryGetThreadDesktopName().empty());
 
-    // Window text round-trip on a real (system-class) window.
     HWND window = CreateWindowExW(0, L"STATIC", L"hello", 0, 0, 0, 0, 0,
         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     CHECK(window != nullptr);
     CHECK(wilx::TryGetWindowText(window) == L"hello");
 
-    // Window owner query: this thread created the window.
     auto owner = wilx::TryGetWindowThreadProcessId(window);
     CHECK(owner && owner->threadId == GetCurrentThreadId());
     CHECK(owner && owner->processId == GetCurrentProcessId());
     CHECK(!wilx::TryGetWindowThreadProcessId(nullptr).has_value());
     DestroyWindow(window);
 
-    // Enumeration: non-empty, and a false-returning callback stops after one.
     std::vector<std::wstring> names;
     wilx::for_each_desktop_nothrow([&](PCWSTR name) { names.emplace_back(name); });
     CHECK(!names.empty());
@@ -48,19 +45,16 @@ int main()
     wilx::for_each_desktop_nothrow([&](PCWSTR) -> bool { ++visited; return false; });
     CHECK(visited == 1);
 
-    // Window station enumeration: an interactive session always sees some.
     std::vector<std::wstring> stationNames;
     wilx::for_each_window_station_nothrow([&](PCWSTR name) { stationNames.emplace_back(name); });
     CHECK(!stationNames.empty());
 
-    // Desktop window enumeration on a desktop opened for reading.
     wil::unique_hdesk inputDesktop(OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS));
     CHECK(inputDesktop);
     size_t windowsSeen = 0;
     wilx::for_each_desktop_window_nothrow(inputDesktop.get(), [&](HWND) { ++windowsSeen; });
     CHECK(windowsSeen > 0);
 
-    // Toolhelp: this process and this thread must appear; stop-on-false works.
     bool foundSelfProcess = false;
     wilx::for_each_process([&](const PROCESSENTRY32W& entry) {
         foundSelfProcess = foundSelfProcess || entry.th32ProcessID == GetCurrentProcessId();
@@ -75,7 +69,6 @@ int main()
     });
     CHECK(foundSelfThread);
 
-    // NoThrow cores carry the error code; tid 0 never resolves.
     std::wstring desktopName;
     DWORD nameError = 0;
     CHECK(wilx::GetThreadDesktopNameNoThrow(GetCurrentThreadId(), desktopName, nameError));

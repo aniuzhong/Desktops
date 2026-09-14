@@ -1,6 +1,3 @@
-// Desktops entry point. Two modes of the same exe:
-//   Desktops.exe                     - manager: panel + docking authority
-//   Desktops.exe --dock <name> <pipe> - per-desktop dock process
 #include <windows.h>
 
 #include <QApplication>
@@ -35,13 +32,11 @@ namespace
 
     QString instancePipe()
     {
-        // Session-scoped, like the old Local\ mutex: fast user switching
-        // must not make two sessions recall each other.
+        // Session-scoped: fast user switching must not make two sessions
+        // recall each other.
         return QString("Desktops-instance-%1").arg(sessionTag());
     }
 
-    // The Qt message handler: a rotating log file under
-    // %LOCALAPPDATA%/Desktops/logs, shared by both process modes.
     QString g_logPath;
     QMutex g_logMutex;
 
@@ -146,8 +141,6 @@ int main(int argc, char* argv[])
             qInfo("manager arg[%d]='%s'", i, argv[i]);
     }
 
-    // Single instance: an existing manager receives "home" and recalls the
-    // user; this launch exits.
     {
         QLocalSocket probe;
         probe.connectToServer(instancePipe());
@@ -185,7 +178,6 @@ int main(int argc, char* argv[])
     MainWindow window(sessionTag());
     window.show();
 
-    // Second instance = go-home recall.
     QObject::connect(&instanceServer, &QLocalServer::newConnection, [&] {
         if (QLocalSocket* connection = instanceServer.nextPendingConnection())
         {

@@ -8,8 +8,6 @@
 //    explain choices the code cannot show.
 //
 //*********************************************************
-//! @file
-//! Per-desktop window enumeration over EnumDesktopWindows.
 #ifndef __WILX_DESKTOP_WINDOWS_INCLUDED
 #define __WILX_DESKTOP_WINDOWS_INCLUDED
 
@@ -45,7 +43,6 @@ namespace details
         }
         else if constexpr (std::is_same_v<result_t, HRESULT>)
         {
-            // NB: only S_OK continues the enumeration; any other HRESULT stops it
             return (S_OK == (*pCallback)(hwnd)) ? TRUE : FALSE;
         }
         else
@@ -83,7 +80,6 @@ namespace details
             }
             else if constexpr (std::is_same_v<result_t, HRESULT>)
             {
-                // NB: only S_OK continues the enumeration; any other HRESULT stops it
                 return (S_OK == (*pCallback)(hwnd)) ? TRUE : FALSE;
             }
             else

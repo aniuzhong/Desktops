@@ -69,7 +69,6 @@ void for_each_process(TCallback&& callback)
         }
         else if constexpr (std::is_same_v<result_t, HRESULT>)
         {
-            // NB: only S_OK continues the enumeration; any other HRESULT stops it
             if (S_OK != callback(entry))
             {
                 return;
@@ -110,7 +109,6 @@ void for_each_thread(TCallback&& callback)
         }
         else if constexpr (std::is_same_v<result_t, HRESULT>)
         {
-            // NB: only S_OK continues the enumeration; any other HRESULT stops it
             if (S_OK != callback(entry))
             {
                 return;

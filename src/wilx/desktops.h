@@ -8,8 +8,6 @@
 //    explain choices the code cannot show.
 //
 //*********************************************************
-//! @file
-//! Desktop enumeration over EnumDesktopsW.
 #ifndef __WILX_DESKTOPS_INCLUDED
 #define __WILX_DESKTOPS_INCLUDED
 
@@ -46,7 +44,6 @@ namespace details
         }
         else if constexpr (std::is_same_v<result_t, HRESULT>)
         {
-            // NB: only S_OK continues the enumeration; any other HRESULT stops it
             return (S_OK == (*pCallback)(lpszDesktopName)) ? TRUE : FALSE;
         }
         else
@@ -84,7 +81,6 @@ namespace details
             }
             else if constexpr (std::is_same_v<result_t, HRESULT>)
             {
-                // NB: only S_OK continues the enumeration; any other HRESULT stops it
                 return (S_OK == (*pCallback)(lpszDesktopName)) ? TRUE : FALSE;
             }
             else
