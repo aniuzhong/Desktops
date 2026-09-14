@@ -1,5 +1,8 @@
 //*********************************************************
 //
+//    Copyright (c) the Desktops authors.
+//    Licensed under the MIT License.
+//
 //    wilx - WIL-style extensions for Virtual Desktop.
 //    Header-only, shaped after wil: machinery earns a
 //    header (the Toolhelp snapshot iteration below),
@@ -10,7 +13,7 @@
 //*********************************************************
 //! @file
 //! System process/thread iteration over Toolhelp snapshots.
-//! Deliberate deviation from the user32 enumerators (desktops.h and kin):
+//! Deliberate deviation from the user32 enumerators (desktop.h and kin):
 //! the callback runs inline on the C++ frame, so there is no exception
 //! barrier to maintain and therefore no separate *_nothrow regime — a
 //! throwing callback simply propagates. Total fail-soft as everywhere:
@@ -18,14 +21,16 @@
 #ifndef __WILX_TOOLHELP_INCLUDED
 #define __WILX_TOOLHELP_INCLUDED
 
-#include <windows.h>
-#include <tlhelp32.h>
+#include <minwindef.h>  // DWORD, LPARAM (SAL)
+#include <tlhelp32.h>   // CreateToolhelp32Snapshot, Process32FirstW, Thread32First
+
 #include <concepts>
 #include <type_traits>
 #include <utility>
 
 #include <wil/resource.h>
 
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 namespace wilx
 {
 //! The entry passed to the callback is reused across iterations: valid only
@@ -124,4 +129,5 @@ void for_each_thread(TCallback&& callback)
     } while (Thread32Next(snapshot.get(), &entry));
 }
 } // namespace wilx
+#endif // WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 #endif // __WILX_TOOLHELP_INCLUDED

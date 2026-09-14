@@ -29,7 +29,7 @@
 #include <wil/resource.h>
 
 #include "wallpaper.h"
-#include "wilx/desktop_windows.h"
+#include "wilx/desktop.h"
 #include "wilx/toolhelp.h"
 #include "wilx/win32_helpers.h"
 

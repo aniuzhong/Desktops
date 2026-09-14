@@ -16,8 +16,7 @@
 #include <wil/resource.h>
 
 #include "dock.h"
-#include "wilx/desktops.h"
-#include "wilx/desktop_windows.h"
+#include "wilx/desktop.h"
 
 Q_LOGGING_CATEGORY(lcPanel, "desktops.panel")
 

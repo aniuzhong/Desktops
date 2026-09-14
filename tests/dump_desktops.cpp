@@ -13,10 +13,8 @@
 //*********************************************************
 #include <windows.h>
 
-#include <wilx/desktops.h>
-#include <wilx/desktop_windows.h>
+#include <wilx/desktop.h>
 #include <wilx/toolhelp.h>
-#include <wilx/window_stations.h>
 #include <wilx/win32_helpers.h>
 
 #include <wil/resource.h>
@@ -50,7 +48,7 @@ namespace
         DWORD tid = 0;
         DWORD pid = 0;
         std::optional<std::wstring> desktopName; // weak identity: bare name, station unknown
-        DWORD desktopError = 0;
+        HRESULT desktopError = S_OK;
     };
 
     struct WindowRecord
@@ -88,6 +86,13 @@ namespace
     {
         // Failures are data here, never swallowed: the dump's whole point.
         return std::format(L"! error {}: {}", error, SameLine(wilx::TryGetWin32ErrorMessage(error)));
+    }
+
+    std::wstring ErrorCell(HRESULT error)
+    {
+        // Same, for the HRESULT cores: they carry nothing but a Win32 code.
+        return std::format(L"! error {}: {}", HRESULT_CODE(error),
+            SameLine(wilx::TryGetWin32ErrorMessage(HRESULT_CODE(error))));
     }
 
     std::wstring ExeNameOrGone(const std::map<DWORD, std::wstring>& exeByPid, DWORD pid)
@@ -129,7 +134,8 @@ namespace
             thread.pid = entry.th32OwnerProcessID;
 
             std::wstring name;
-            if (wilx::GetThreadDesktopNameNoThrow(thread.tid, name, thread.desktopError))
+            thread.desktopError = wilx::GetThreadDesktopNameNoThrow(thread.tid, name);
+            if (SUCCEEDED(thread.desktopError))
                 thread.desktopName = std::move(name);
 
             threads.push_back(std::move(thread));
@@ -274,7 +280,7 @@ namespace
         const std::map<DWORD, std::wstring>& exeByPid, DWORD selfTid)
     {
         std::map<std::wstring, std::vector<const ThreadRecord*>> byName;
-        std::map<DWORD, std::vector<const ThreadRecord*>> byError;
+        std::map<HRESULT, std::vector<const ThreadRecord*>> byError;
         for (const ThreadRecord& thread : threads)
         {
             if (thread.desktopName)
@@ -401,9 +407,8 @@ int main()
     DWORD selfSession = 0;
     ProcessIdToSessionId(selfPid, &selfSession);
 
-    DWORD inputError = 0;
     std::wstring inputDesktopName;
-    (void)wilx::GetInputDesktopNameNoThrow(inputDesktopName, inputError);
+    const HRESULT inputError = wilx::GetInputDesktopNameNoThrow(inputDesktopName);
 
     const auto processes = CaptureProcesses();
     size_t pseudoThreads = 0;
