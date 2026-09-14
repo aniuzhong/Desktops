@@ -38,9 +38,15 @@ Q_LOGGING_CATEGORY(lcDock, "desktops.dock")
 namespace
 {
     constexpr wchar_t kPowershellSuffix[] = L"\\WindowsPowerShell\\v1.0\\powershell.exe";
-    constexpr wchar_t kExplorerSuffix[] = L"\\explorer.exe";
     constexpr wchar_t kCmdSuffix[] = L"\\cmd.exe";
     constexpr wchar_t kNotepadSuffix[] = L"\\notepad.exe";
+
+    // Bar geometry. The height is fixed so the layout and the positioning
+    // maths agree on one number; kIconSize is 1:1 with the shell's large
+    // icon (SHGFI_LARGEICON), so icons are never upscaled.
+    constexpr int kBarHeight = 48;
+    constexpr int kButtonSize = 40;
+    constexpr int kIconSize = 32;
 
     QString q(const std::wstring& text)
     {
@@ -57,13 +63,6 @@ namespace
     {
         std::wstring path(MAX_PATH, L'\0');
         path.resize(::GetSystemDirectoryW(path.data(), MAX_PATH));
-        return path;
-    }
-
-    std::wstring windowsDirectory()
-    {
-        std::wstring path(MAX_PATH, L'\0');
-        path.resize(::GetWindowsDirectoryW(path.data(), MAX_PATH));
         return path;
     }
 
@@ -240,18 +239,6 @@ namespace
         return icon;
     }
 
-    QIcon folderIcon()
-    {
-        // SHGetStockIconInfo(SIID_FOLDER) failed on this machine; a real
-        // directory through SHGetFileInfo is the proven path.
-        SHFILEINFOW info{};
-        if (::SHGetFileInfoW(L"C:\\Windows", 0, &info, sizeof(info),
-                SHGFI_ICON | SHGFI_LARGEICON)
-            == 0)
-            return {};
-        return fromHIconHandle(info.hIcon);
-    }
-
     // The app's own SVG (embedded via desktops.qrc), rendered at 3x for
     // crisp scaling down to the 32px button icon.
     QIcon appSvgIcon()
@@ -294,29 +281,47 @@ namespace
         return QString::fromUtf8(file.readAll());
     }
 
-    // Created hidden: a fresh desktop is never auto-entered.
+    // A full-width bar docked to the bottom edge. This desktop has no
+    // shell, so this bar is the taskbar. Created hidden: a fresh desktop
+    // is never auto-entered.
+    //
+    // Qt::Window, deliberately not Qt::Tool. Tool windows are owned, and
+    // Windows hides an owned tool window when the owner goes away (closing
+    // a launched app took the bar with it); they are also excluded from
+    // Qt's quit-on-last-window-closed count, so closing the Run dialog
+    // quit the whole dock process. Keeping out of Alt+Tab - the only thing
+    // Tool would buy - is moot here: Alt+Tab is a shell feature and these
+    // desktops have no shell.
+    //
+    // DoesNotAcceptFocus alone: showing the bar never moves the keyboard.
     QWidget* composeDock(const QString& desktop, const std::function<void()>& onDefault,
         const std::function<void()>& onPowerShell, const std::function<void()>& onCmd,
-        const std::function<void()>& onNotepad, const std::function<void()>& onExplorer,
+        const std::function<void()>& onNotepad,
         const std::function<void()>& onRun)
     {
         auto* dock = new QWidget;
         dock->setWindowTitle("Desktops - " + desktop);
-        dock->setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+        dock->setWindowFlags(Qt::FramelessWindowHint | Qt::Window |
+            Qt::WindowDoesNotAcceptFocus);
+        dock->setFixedHeight(kBarHeight);
         dock->setStyleSheet(dockStyleSheet());
 
+        // Stretch either side keeps the icons centred in the full-width
+        // bar; the bar itself supplies the padding, so no margins.
         auto* row = new QHBoxLayout(dock);
-        row->setContentsMargins(20, 16, 20, 16);
-        row->setSpacing(20);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(8);
+        row->addStretch();
 
-        // Labels are hover tooltips, not permanent captions (macOS dock
+        // Labels are hover tooltips, not permanent captions (taskbar
         // style).
         const auto addButton = [&](QIcon icon, const QString& label,
                                    const std::function<void()>& handler) {
             auto* button = new QToolButton(dock);
             if (!icon.isNull())
                 button->setIcon(std::move(icon));
-            button->setIconSize(QSize(40, 40));
+            button->setIconSize(QSize(kIconSize, kIconSize));
+            button->setFixedSize(kButtonSize, kButtonSize);
             button->setToolTip(label);
             row->addWidget(button);
             QObject::connect(button, &QAbstractButton::clicked, handler);
@@ -325,18 +330,19 @@ namespace
         addButton(executableIcon(systemDirectory() + kPowershellSuffix), "PowerShell", onPowerShell);
         addButton(executableIcon(systemDirectory() + kCmdSuffix), "CMD", onCmd);
         addButton(executableIcon(systemDirectory() + kNotepadSuffix), "NotePad", onNotepad);
-        addButton(executableIcon(windowsDirectory() + kExplorerSuffix), "Explorer", onExplorer);
         addButton(resourceIcon(systemDirectory() + L"\\imageres.dll", 100), "Run", onRun);
+        row->addStretch();
         return dock;
     }
 
-    // Bottom-center of the primary screen, small margin above the edge.
-    void positionAtBottomCenter(QWidget* dock)
+    // Full width of the primary screen, flush against the bottom edge.
+    // geometry(), not availableGeometry(): with no shell nothing is
+    // reserved, and this bar is what would be reserved.
+    void positionAlongBottom(QWidget* dock)
     {
-        dock->adjustSize();
-        const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
-        dock->move(available.x() + (available.width() - dock->width()) / 2,
-            available.bottom() - dock->height() - 12);
+        const QRect screen = QGuiApplication::primaryScreen()->geometry();
+        dock->setGeometry(screen.x(), screen.bottom() + 1 - dock->height(), screen.width(),
+            dock->height());
     }
 }  // namespace
 
@@ -354,6 +360,13 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     ::ImmDisableIME(0);
 
     QApplication app(argc, argv);
+    // This process lives and dies by the manager's pipe (protocol::Exit),
+    // not by its windows: a dock can legitimately have no visible window
+    // for long stretches, and the Run dialog closing is not a reason to
+    // quit. Without this, Qt's default quit-on-last-window-closed ends
+    // the process the moment the last counted window closes - which took
+    // the bar away mid-launch.
+    QApplication::setQuitOnLastWindowClosed(false);
 
     const std::wstring desktopWide = stdW(desktop);
     qCInfo(lcDock,
@@ -415,9 +428,6 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     const auto onNotepad = [&] {
         launchDetached(Dock::launchNotePad, "btn:NotePad");
     };
-    const auto onExplorer = [&] {
-        launchDetached(Dock::launchExplorer, "btn:Explorer");
-    };
     const auto onRun = [&] {
         const QString pick = QFileDialog::getOpenFileName(
             dock, QString(), QString(), "All files (*.*)");
@@ -433,9 +443,8 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     if (wallpaper)
         wallpaper->show();
 
-    dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onExplorer,
-        onRun);
-    positionAtBottomCenter(dock);
+    dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onRun);
+    positionAlongBottom(dock);
 
     socket.connectToServer(pipeName);
     if (!socket.waitForConnected(5000))
@@ -455,9 +464,10 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         {
             if (line == protocol::Activate && dock)
             {
+                // No activateWindow(): the bar must not take focus, so
+                // arriving on a desktop leaves the keyboard where it was.
                 dock->show();
                 dock->raise();
-                dock->activateWindow();
             }
             else if (line == protocol::Park && dock)
             {
@@ -517,14 +527,6 @@ bool Dock::launchNotePad(const std::wstring& desktop, const char* source)
     // Huorong off). The forward-slash command line does not match the
     // engine's pattern and sails through.
     return launch(forwardSlashed(systemDirectory() + kNotepadSuffix), L"",
-        desktop, 0, source);
-}
-
-bool Dock::launchExplorer(const std::wstring& desktop, const char* source)
-{
-    // GUI app, no console flags; forward slash like NotePad - explorer
-    // has never launched any other way from here.
-    return launch(forwardSlashed(windowsDirectory() + kExplorerSuffix), L"",
         desktop, 0, source);
 }
 

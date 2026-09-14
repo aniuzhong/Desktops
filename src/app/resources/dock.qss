@@ -1,24 +1,25 @@
-/* The dock tray and its buttons. Colours are opaque on purpose: on non-
-   default desktops DWM does not composite, so a translucent background
-   renders invisible - do not switch these to rgba(). */
+/* The dock bar: full width, docked to the bottom edge - this desktop has
+   no shell, so this is the taskbar. Colours are opaque on purpose: on
+   non-default desktops DWM does not composite, so a translucent bar
+   background renders invisible - do not switch it to rgba(). */
 QWidget {
-    background: #E2E8F0;
-    border-radius: 18px;
+    background: #F3F3F3;
+    border-top: 1px solid #E5E5E5;
 }
 
+/* Buttons are invisible until hovered: the icon sits straight on the bar
+   and only the hover pill is drawn behind it. No size rules here - the
+   button box is set in composeDock and belongs with the layout code. */
 QToolButton {
-    background: #F8FAFC;
-    border: 1px solid #CBD5E1;
-    border-radius: 12px;
-    min-width: 72px;
-    min-height: 72px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
 }
 
 QToolButton:hover {
-    background: #F1F5F9;
-    border-color: #94A3B8;
+    background: #E8E8E8;
 }
 
 QToolButton:pressed {
-    background: #E2E8F0;
+    background: #DADADA;
 }

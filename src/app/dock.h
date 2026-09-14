@@ -25,7 +25,7 @@ namespace protocol
 }
 
 // The dock process (main.cpp --dock <desktop> <pipe>): owns the six-
-// button dock (Default / PowerShell / CMD / NotePad / Explorer / Run -
+// button dock (Default / PowerShell / CMD / NotePad / Run -
 // no text input) on its
 // desktop and every launch performed from it. The process's main thread
 // starts on the target desktop via lpDesktop, so QApplication
@@ -53,7 +53,6 @@ public:
     static bool launchCMD(const std::wstring& desktop, const char* source);
     static bool launchPowershell5(const std::wstring& desktop, const char* source);
     static bool launchNotePad(const std::wstring& desktop, const char* source);
-    static bool launchExplorer(const std::wstring& desktop, const char* source);
 
     // No app knowledge: verbatim path, caller supplies everything. The
     // shell-open fallback (associations) covers non-executables.
