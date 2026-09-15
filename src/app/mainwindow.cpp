@@ -154,9 +154,13 @@ void MainWindow::onNew()
         QLineEdit::Normal, QString(), &accepted).trimmed();
     if (!accepted || name.isEmpty())
         return;
+    // Desktop names are case-insensitive in Win32: creating "probecase" when
+    // "ProbeCase" exists reopens the same desktop instead of failing, so the
+    // duplicate check must be too - a case-sensitive lookup here would give one
+    // desktop two docks (two bars, two wallpapers).
     if (!isValidDesktopName(name)
-        || 0 == name.compare(kDefaultDesktop, Qt::CaseInsensitive)
-        || docks_.find(name.toStdWString()) != docks_.end())
+        || kReservedDesktops.contains(name, Qt::CaseInsensitive)
+        || listExtraDesktops().contains(name, Qt::CaseInsensitive))
     {
         QMessageBox::warning(this, "New Desktop",
             QString("A desktop named '%1' cannot be used.").arg(name));

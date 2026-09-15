@@ -145,8 +145,12 @@ namespace
     }
 
     // HICON -> QIcon without QtWinExtras (dropped in Qt 6): pull the
-    // 32bpp color bitmap via GetDIBits and wrap it in a QPixmap.
-    // Destroys `icon` on the way out: the bits are copied into the QImage.
+    // 32bpp color bitmap via GetDIBits and wrap it in a QPixmap. It copies the
+    // bits and releases the ICONINFO bitmaps GetIconInfo allocated, but never
+    // `icon` itself - the caller owns it and destroys it exactly once. Destroying
+    // twice does not crash (the second call just fails with
+    // ERROR_INVALID_CURSOR_HANDLE), but the handle value may already have been
+    // reused, which would destroy somebody else's icon.
     QIcon iconFromHicon(HICON icon)
     {
         ICONINFO info{};
@@ -176,18 +180,9 @@ namespace
             ::DeleteObject(info.hbmColor);
         if (info.hbmMask)
             ::DeleteObject(info.hbmMask);
-        ::DestroyIcon(icon);
         if (image.isNull())
             return {};
         return QPixmap::fromImage(image);
-    }
-
-    QIcon fromHIconHandle(HICON icon)
-    {
-        QIcon result = iconFromHicon(icon);
-        if (icon)
-            ::DestroyIcon(icon);
-        return result;
     }
 
     QIcon executableIcon(const std::wstring& executable)
@@ -199,7 +194,11 @@ namespace
                 SHGFI_ICON | SHGFI_LARGEICON)
             == 0)
             return {};
-        return fromHIconHandle(info.hIcon);
+        // SHGetFileInfoW owns the icon it hands back: convert, then destroy it
+        // exactly once.
+        const QIcon icon = iconFromHicon(info.hIcon);
+        ::DestroyIcon(info.hIcon);
+        return icon;
     }
 
     // For icons with no executable file to name: the Win+R "Run" icon,
@@ -219,7 +218,9 @@ namespace
                 ::DestroyIcon(smallIcon);
             return {};
         }
-        QIcon icon = iconFromHicon(largeIcon);   // destroys largeIcon
+        // ExtractIconExW owns both icons it hands back.
+        const QIcon icon = iconFromHicon(largeIcon);
+        ::DestroyIcon(largeIcon);
         if (smallIcon)
             ::DestroyIcon(smallIcon);
         return icon;
