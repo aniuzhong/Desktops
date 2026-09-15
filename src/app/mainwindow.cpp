@@ -22,60 +22,55 @@ Q_LOGGING_CATEGORY(lcPanel, "desktops.panel")
 
 namespace
 {
-    inline constexpr wchar_t kDefaultDesktop[] = L"Default";
+    const QString kDefaultDesktop = QStringLiteral("Default");
 
-    QString q(const std::wstring& text)
+    // Desktops that are never ours to manage.
+    const QStringList kReservedDesktops = {kDefaultDesktop, QStringLiteral("Winlogon"),
+        QStringLiteral("Disconnect")};
+
+    void send(QLocalSocket* socket, const char* token)
     {
-        return QString::fromWCharArray(text.c_str(), static_cast<qsizetype>(text.size()));
+        socket->write(token);
+        socket->write("\n");
     }
 
-    std::wstring stdW(const QString& text)
+    QStringList listExtraDesktops()
     {
-        return std::wstring(reinterpret_cast<const wchar_t*>(text.utf16()),
-            static_cast<size_t>(text.size()));
-    }
-
-    std::vector<std::wstring> listExtraDesktops()
-    {
-        std::vector<std::wstring> names;
+        QStringList names;
         wilx::for_each_desktop_nothrow([&](PCWSTR rawName) {
-            std::wstring name(rawName);
-            if (_wcsicmp(name.c_str(), kDefaultDesktop) == 0
-                || _wcsicmp(name.c_str(), L"Winlogon") == 0
-                || _wcsicmp(name.c_str(), L"Disconnect") == 0)
+            const QString name = QString::fromWCharArray(rawName);
+            if (kReservedDesktops.contains(name, Qt::CaseInsensitive))
                 return true;
             // Probe before listing: a name that cannot be opened is on
             // its way out (or belongs to someone else's sandbox).
-            wil::unique_hdesk probe(::OpenDesktopW(name.c_str(), 0, FALSE,
-                DESKTOP_SWITCHDESKTOP | DESKTOP_READOBJECTS));
+            wil::unique_hdesk probe(::OpenDesktopW(reinterpret_cast<LPCWSTR>(name.utf16()), 0,
+                FALSE, DESKTOP_SWITCHDESKTOP | DESKTOP_READOBJECTS));
             if (probe)
-                names.push_back(std::move(name));
+                names.append(name);
             return true;
         });
-        std::sort(names.begin(), names.end(),
-            [](const std::wstring& a, const std::wstring& b) {
-                return _wcsicmp(a.c_str(), b.c_str()) < 0;
-            });
+        names.sort(Qt::CaseInsensitive);
         return names;
     }
 
-    bool switchInputTo(const std::wstring& name)
+    bool switchInputTo(const QString& name)
     {
-        qCInfo(lcPanel, "moving input desktop to '%s'", q(name).toUtf8().constData());
+        const std::wstring wide = name.toStdWString();
+        qCInfo(lcPanel, "moving input desktop to '%s'", name.toUtf8().constData());
         wil::unique_hdesk desktop(
-            ::OpenDesktopW(name.c_str(), 0, FALSE, DESKTOP_SWITCHDESKTOP));
+            ::OpenDesktopW(wide.c_str(), 0, FALSE, DESKTOP_SWITCHDESKTOP));
         if (!desktop)
         {
             const DWORD error = ::GetLastError();
             qCWarning(lcPanel, "OpenDesktopW('%s') failed (%lu)",
-                q(name).toUtf8().constData(), error);
+                name.toUtf8().constData(), error);
             return false;
         }
         if (!::SwitchDesktop(desktop.get()))
         {
             const DWORD error = ::GetLastError();
             qCWarning(lcPanel, "SwitchDesktop('%s') failed (%lu)",
-                q(name).toUtf8().constData(), error);
+                name.toUtf8().constData(), error);
             return false;
         }
         return true;
@@ -86,11 +81,10 @@ namespace
         if (name.trimmed().isEmpty())
             return false;
         // Characters that would break pipe names or command lines.
-        static const std::wstring forbidden = L"\\/\":*?<>|";
+        static const QString forbidden = QStringLiteral("\\/\":*?<>|");
         for (const QChar ch : name)
         {
-            const wchar_t wide = static_cast<wchar_t>(ch.unicode());
-            if (wide == 0 || forbidden.find(wide) != std::wstring::npos)
+            if (ch.unicode() == 0 || forbidden.contains(ch))
                 return false;
         }
         return true;
@@ -143,8 +137,7 @@ void MainWindow::goHome()
     {
         if (entry.active && entry.socket && entry.socket->state() == QLocalSocket::ConnectedState)
         {
-            entry.socket->write(protocol::Park);
-            entry.socket->write("\n");
+            send(entry.socket, protocol::Park);
             entry.active = false;
             entry.parked = true;
         }
@@ -162,31 +155,31 @@ void MainWindow::onNew()
     if (!accepted || name.isEmpty())
         return;
     if (!isValidDesktopName(name)
-        || _wcsicmp(stdW(name).c_str(), kDefaultDesktop) == 0
-        || docks_.find(stdW(name)) != docks_.end())
+        || 0 == name.compare(kDefaultDesktop, Qt::CaseInsensitive)
+        || docks_.find(name.toStdWString()) != docks_.end())
     {
         QMessageBox::warning(this, "New Desktop",
             QString("A desktop named '%1' cannot be used.").arg(name));
         return;
     }
-    createDesktop(stdW(name));
+    createDesktop(name);
 }
 
 void MainWindow::onSwitchTo()
 {
     const QString name = selectedDesktop();
     if (!name.isEmpty())
-        switchTo(stdW(name));
+        switchTo(name);
 }
 
-bool MainWindow::switchTo(const std::wstring& desktop)
+bool MainWindow::switchTo(const QString& desktop)
 {
-    if (_wcsicmp(desktop.c_str(), kDefaultDesktop) == 0)
+    if (0 == desktop.compare(kDefaultDesktop, Qt::CaseInsensitive))
     {
         goHome();
         return true;
     }
-    DockEntry* entry = find(desktop);
+    DockEntry* entry = find(desktop.toStdWString());
     // The health gate: exactly one precondition, read from the state the
     // dock itself reported. No probing, no waiting.
     if (!entry || !entry->ready
@@ -194,43 +187,44 @@ bool MainWindow::switchTo(const std::wstring& desktop)
     {
         QMessageBox::warning(this, "Desktops",
             QString("Could not attach to desktop '%1': its dock is not ready.")
-                .arg(q(desktop)));
+                .arg(desktop));
         return false;
     }
     if (!switchInputTo(desktop))
     {
         QMessageBox::warning(this, "Desktops",
-            QString("Switching to '%1' did not take effect.").arg(q(desktop)));
+            QString("Switching to '%1' did not take effect.").arg(desktop));
         return false;
     }
-    entry->socket->write(protocol::Activate);
-    entry->socket->write("\n");
+    send(entry->socket, protocol::Activate);
     entry->active = true;
     entry->parked = false;
     return true;
 }
 
-void MainWindow::createDesktop(const std::wstring& name)
+void MainWindow::createDesktop(const QString& name)
 {
-    qCInfo(lcPanel, "creating desktop '%s'", q(name).toUtf8().constData());
+    qCInfo(lcPanel, "creating desktop '%s'", name.toUtf8().constData());
+    const std::wstring wide = name.toStdWString();
     wil::unique_hdesk created(
-        ::CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr));
+        ::CreateDesktopW(wide.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr));
     if (!created)
     {
         const DWORD error = ::GetLastError();
         qCWarning(lcPanel, "CreateDesktopW('%s') failed (%lu)",
-            q(name).toUtf8().constData(), error);
+            name.toUtf8().constData(), error);
         QMessageBox::warning(this, "Desktops",
-            QString("Could not create desktop '%1' (error %2).").arg(q(name)).arg(error));
+            QString("Could not create desktop '%1' (error %2).").arg(name).arg(error));
         return;
     }
-    spawnDock(name, std::move(created));
+    spawnDock(wide, std::move(created));
 }
 
 bool MainWindow::spawnDock(const std::wstring& desktop, wil::unique_hdesk creationPin)
 {
     const QString pipe = QString("%1-dock-%2-%3")
-        .arg(instanceTag_, QString::number(::GetCurrentProcessId()), q(desktop));
+        .arg(instanceTag_, QString::number(::GetCurrentProcessId()),
+            QString::fromStdWString(desktop));
 
     auto entry = DockEntry{};
     entry.server = new QLocalServer(this);
@@ -241,14 +235,16 @@ bool MainWindow::spawnDock(const std::wstring& desktop, wil::unique_hdesk creati
             entry.server->errorString().toUtf8().constData());
         delete entry.server;
         QMessageBox::warning(this, "Desktops",
-            QString("Could not start the dock for desktop '%1'.").arg(q(desktop)));
+            QString("Could not start the dock for desktop '%1'.")
+                .arg(QString::fromStdWString(desktop)));
         return false;
     }
     entry.creationPin = std::move(creationPin);
     auto [it, inserted] = docks_.emplace(desktop, std::move(entry));
     if (!inserted)
     {
-        qCWarning(lcPanel, "dock for '%s' already exists", q(desktop).toUtf8().constData());
+        qCWarning(lcPanel, "dock for '%s' already exists",
+            QString::fromStdWString(desktop).toUtf8().constData());
         delete it->second.server;
         return false;
     }
@@ -260,7 +256,7 @@ bool MainWindow::spawnDock(const std::wstring& desktop, wil::unique_hdesk creati
     ::GetModuleFileNameW(nullptr, self, MAX_PATH);
     // writable: CreateProcessW may rewrite the command line
     std::wstring command = L"\"" + std::wstring(self) + L"\" --dock " +
-        desktop + L" \"" + stdW(pipe) + L"\"";
+        desktop + L" \"" + pipe.toStdWString() + L"\"";
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
@@ -273,7 +269,7 @@ bool MainWindow::spawnDock(const std::wstring& desktop, wil::unique_hdesk creati
         dropDock(desktop);
         QMessageBox::warning(this, "Desktops",
             QString("Could not start the dock for desktop '%1' (error %2).")
-                .arg(q(desktop))
+                .arg(QString::fromStdWString(desktop))
                 .arg(error));
         return false;
     }
@@ -282,7 +278,7 @@ bool MainWindow::spawnDock(const std::wstring& desktop, wil::unique_hdesk creati
     // The dock process itself is the desktop pin once attached; the
     // creation pin is released on ready. Until then the desktop cannot
     // be switched into (the health gate refuses).
-    qCInfo(lcPanel, "dock spawned for '%s'", q(desktop).toUtf8().constData());
+    qCInfo(lcPanel, "dock spawned for '%s'", QString::fromStdWString(desktop).toUtf8().constData());
     refreshList();
     return true;
 }
@@ -305,12 +301,9 @@ void MainWindow::onDockSocketReadyRead(const std::wstring& desktop)
     DockEntry* entry = find(desktop);
     if (!entry || !entry->socket)
         return;
-    entry->inbox += entry->socket->readAll();
-    for (int newline = entry->inbox.indexOf('\n'); newline >= 0;
-         newline = entry->inbox.indexOf('\n'))
+    while (entry->socket->canReadLine())
     {
-        const QByteArray line = entry->inbox.left(newline);
-        entry->inbox.remove(0, newline + 1);
+        const QByteArray line = entry->socket->readLine().trimmed();
         if (line == protocol::Ready)
             onDockReady(desktop);
         else if (line == protocol::Home)
@@ -325,7 +318,7 @@ void MainWindow::onDockReady(const std::wstring& desktop)
         return;
     entry->ready = true;
     entry->creationPin.reset();   // the dock process is the pin now
-    qCInfo(lcPanel, "dock for '%s' is ready", q(desktop).toUtf8().constData());
+    qCInfo(lcPanel, "dock for '%s' is ready", QString::fromStdWString(desktop).toUtf8().constData());
     refreshList();
 }
 
@@ -334,40 +327,35 @@ void MainWindow::onDockDisconnected(const std::wstring& desktop)
     DockEntry* entry = find(desktop);
     const bool wasReady = entry && entry->ready;
     qCWarning(lcPanel, "dock for '%s' exited (was ready: %d)",
-        q(desktop).toUtf8().constData(), wasReady ? 1 : 0);
+        QString::fromStdWString(desktop).toUtf8().constData(), wasReady ? 1 : 0);
     dropDock(desktop);
     refreshList();
     if (wasReady)
         QMessageBox::warning(this, "Desktops",
             QString("The dock for desktop '%1' exited; the desktop is gone.")
-                .arg(q(desktop)));
+                .arg(QString::fromStdWString(desktop)));
 }
 
 void MainWindow::refreshList()
 {
-    const std::vector<std::wstring> extras = listExtraDesktops();
+    const QStringList extras = listExtraDesktops();
 
     // dropDock erases from docks_, so the drop list is collected first.
     std::vector<std::wstring> toDrop;
     for (auto& [name, entry] : docks_)
     {
-        const bool exists = std::find_if(extras.begin(), extras.end(),
-            [&](const std::wstring& candidate) {
-                return _wcsicmp(candidate.c_str(), name.c_str()) == 0;
-            }) != extras.end();
-        if (!exists)
+        if (!extras.contains(QString::fromStdWString(name), Qt::CaseInsensitive))
             toDrop.push_back(name);
     }
     for (const std::wstring& name : toDrop)
         dropDock(name);
-    for (const std::wstring& extra : extras)
-        if (!find(extra))
-            spawnDock(extra, nullptr);
+    for (const QString& extra : extras)
+        if (!find(extra.toStdWString()))
+            spawnDock(extra.toStdWString(), nullptr);
 
     desktopList_->clear();
-    desktopList_->addItem(QString::fromWCharArray(kDefaultDesktop));
-    for (const std::wstring& extra : extras)
-        desktopList_->addItem(QString::fromWCharArray(extra.c_str()));
+    desktopList_->addItem(kDefaultDesktop);
+    desktopList_->addItems(extras);
 }
 
 MainWindow::DockEntry* MainWindow::find(const std::wstring& desktop)
@@ -384,8 +372,7 @@ void MainWindow::dropDock(const std::wstring& desktop)
     auto& entry = it->second;
     if (entry.socket && entry.socket->state() == QLocalSocket::ConnectedState)
     {
-        entry.socket->write(protocol::Exit);
-        entry.socket->write("\n");
+        send(entry.socket, protocol::Exit);
         entry.socket->flush();
     }
     if (entry.socket)

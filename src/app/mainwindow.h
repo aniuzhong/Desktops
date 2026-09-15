@@ -50,7 +50,6 @@ private:
         QLocalServer* server = nullptr;    // per-dock pipe (owned)
         QLocalSocket* socket = nullptr;    // set on connection (owned)
         wil::unique_hdesk creationPin;     // held until ready releases it
-        QByteArray inbox;
         bool ready = false;                // handshake received
         bool parked = true;                // hidden (not the input desktop's dock)
         bool active = false;               // input desktop is here
@@ -58,12 +57,12 @@ private:
 
     // The health gate + the only SwitchDesktop call site. Refuses with
     // a panel message when the target dock is not Parked/Active.
-    bool switchTo(const std::wstring& desktop);
+    bool switchTo(const QString& desktop);
 
     // CreateDesktopW; the desktop handle moves into the dock entry as
     // its creation pin and is released when the dock reports ready (the
     // dock process's own attachment is the pin from then on).
-    void createDesktop(const std::wstring& name);
+    void createDesktop(const QString& name);
 
     // Listens on the dock's pipe, launches the dock process on the
     // desktop, and wires the connection handlers. With a creation pin,

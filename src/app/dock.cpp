@@ -47,17 +47,6 @@ namespace
     constexpr int kButtonSize = 40;
     constexpr int kIconSize = 32;
 
-    QString q(const std::wstring& text)
-    {
-        return QString::fromWCharArray(text.c_str(), static_cast<qsizetype>(text.size()));
-    }
-
-    std::wstring stdW(const QString& text)
-    {
-        return std::wstring(reinterpret_cast<const wchar_t*>(text.utf16()),
-            static_cast<size_t>(text.size()));
-    }
-
     std::wstring systemDirectory()
     {
         std::wstring path(MAX_PATH, L'\0');
@@ -252,17 +241,6 @@ namespace
         return QPixmap::fromImage(image);
     }
 
-    std::vector<QByteArray> takeLines(QByteArray& buffer)
-    {
-        std::vector<QByteArray> lines;
-        for (int newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n'))
-        {
-            lines.push_back(buffer.left(newline));
-            buffer.remove(0, newline + 1);
-        }
-        return lines;
-    }
-
     // resources/dock.qss carries the rationale behind the colours.
     QString dockStyleSheet()
     {
@@ -370,24 +348,23 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     // the bar away mid-launch.
     QApplication::setQuitOnLastWindowClosed(false);
 
-    const std::wstring desktopWide = stdW(desktop);
+    const std::wstring desktopWide = desktop.toStdWString();
     qCInfo(lcDock,
         "dock starting: desktop='%s' pipe='%s' pid=%lu mainTid=%lu threadDesktop='%s' (verifies the lpDesktop attach)",
-        q(desktopWide).toUtf8().constData(), pipeName.toUtf8().constData(),
+        desktop.toUtf8().constData(), pipeName.toUtf8().constData(),
         ::GetCurrentProcessId(),
         ::GetCurrentThreadId(),
-        q(wilx::TryGetThreadDesktopName()).toUtf8().constData());
+        QString::fromStdWString(wilx::TryGetThreadDesktopName()).toUtf8().constData());
     const wil::unique_hdesk desktopPin(
         ::OpenDesktopW(desktopWide.c_str(), 0, FALSE, GENERIC_ALL));
     if (!desktopPin)
     {
         qCCritical(lcDock, "OpenDesktopW('%s') failed (%lu)",
-            q(desktopWide).toUtf8().constData(), ::GetLastError());
+            desktop.toUtf8().constData(), ::GetLastError());
         return 3;
     }
 
     QLocalSocket socket;
-    QByteArray inbox;
     QWidget* wallpaper = nullptr;
     QWidget* dock = nullptr;
 
@@ -435,7 +412,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
             dock, QString(), QString(), "All files (*.*)");
         if (pick.isEmpty())
             return;
-        launchDetachedUnknown(stdW(pick), L"", 0, "btn:Run-open");
+        launchDetachedUnknown(pick.toStdWString(), L"", 0, "btn:Run-open");
     };
 
     // Wallpaper first. Unlike the dock it is shown at birth and never
@@ -466,9 +443,9 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     qCInfo(lcDock, "ready reported to manager");
 
     QObject::connect(&socket, &QLocalSocket::readyRead, [&] {
-        inbox += socket.readAll();
-        for (const QByteArray& line : takeLines(inbox))
+        while (socket.canReadLine())
         {
+            const QByteArray line = socket.readLine().trimmed();
             // Every instruction is logged: when the bar once vanished, the
             // absence of a logged Park/Exit was the only clue there was.
             qCInfo(lcDock, "manager sent '%s'", line.constData());
@@ -499,8 +476,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     });
 
     const int code = app.exec();
-    qCInfo(lcDock, "dock for '%s' exiting with code %d",
-        q(desktopWide).toUtf8().constData(), code);
+    qCInfo(lcDock, "dock for '%s' exiting with code %d", desktop.toUtf8().constData(), code);
     delete wallpaper;
     delete dock;
     return code;
@@ -555,8 +531,10 @@ bool Dock::launch(const std::wstring& exe, const std::wstring& args,
     qCInfo(lcDock,
         "[%s] CreateProcessW: exe='%s' args='%s' cmd='%s' lpDesktop='%s' flags=0x%lx "
         "callerPid=%lu callerTid=%lu",
-        source, q(exe).toUtf8().constData(), q(args).toUtf8().constData(),
-        q(command).toUtf8().constData(), q(desktop).toUtf8().constData(),
+        source, QString::fromStdWString(exe).toUtf8().constData(),
+        QString::fromStdWString(args).toUtf8().constData(),
+        QString::fromStdWString(command).toUtf8().constData(),
+        QString::fromStdWString(desktop).toUtf8().constData(),
         creationFlags, ::GetCurrentProcessId(), ::GetCurrentThreadId());
     const ULONGLONG createStartedAt = ::GetTickCount64();
     const BOOL ok = ::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
@@ -565,7 +543,7 @@ bool Dock::launch(const std::wstring& exe, const std::wstring& args,
     if (!ok)
     {
         qCWarning(lcDock, "[%s] CreateProcessW('%s') failed (%lu)",
-            source, q(exe).toUtf8().constData(), ::GetLastError());
+            source, QString::fromStdWString(exe).toUtf8().constData(), ::GetLastError());
         return false;
     }
     qCInfo(lcDock, "[%s] launched pid=%lu in %llums", source, pi.dwProcessId, createTook);

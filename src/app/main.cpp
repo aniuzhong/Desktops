@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QIcon>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QMessageBox>
@@ -100,6 +101,28 @@ namespace
             std::abort();
         });
     }
+    // The command line is how the manager hands a dock its identity, and that
+    // identity is Unicode: main's argv has already been converted through the
+    // process ANSI code page (1252 on this machine), which turns a desktop
+    // named 桌面1 into "??1". Read the wide command line instead; QApplication
+    // still gets the original argc/argv.
+    QStringList wideArguments()
+    {
+        int count = 0;
+        LPWSTR* wide = ::CommandLineToArgvW(::GetCommandLineW(), &count);
+        if (!wide)
+        {
+            return {};
+        }
+        QStringList arguments;
+        arguments.reserve(count);
+        for (int i = 0; i < count; ++i)
+        {
+            arguments.append(QString::fromWCharArray(wide[i]));
+        }
+        ::LocalFree(wide);
+        return arguments;
+    }
 }  // namespace
 
 int main(int argc, char* argv[])
@@ -107,17 +130,19 @@ int main(int argc, char* argv[])
     // Light theme regardless of the system's dark-mode preference.
     qputenv("QT_QPA_PLATFORM", "windows:darkmode=0");
 
-    if (argc >= 4 && std::strcmp(argv[1], "--dock") == 0)
+    const QStringList arguments = wideArguments();
+
+    if (arguments.size() >= 4 && arguments.at(1) == QStringLiteral("--dock"))
     {
         QApplication app(argc, argv);
         app.setApplicationName("Desktops");
         installLogging();
         const std::wstring threadDesktop = wilx::TryGetThreadDesktopName();
         qInfo("dock mode: desktop='%s' pipe='%s' pid=%lu mainTid=%lu threadDesktop='%s'",
-            argv[2], argv[3], ::GetCurrentProcessId(), ::GetCurrentThreadId(),
-            QString::fromWCharArray(threadDesktop.c_str()).toUtf8().constData());
-        const int dockResult = Dock::run(QString::fromLocal8Bit(argv[2]),
-            QString::fromLocal8Bit(argv[3]), argc, argv);
+            arguments.at(2).toUtf8().constData(), arguments.at(3).toUtf8().constData(),
+            ::GetCurrentProcessId(), ::GetCurrentThreadId(),
+            QString::fromStdWString(threadDesktop).toUtf8().constData());
+        const int dockResult = Dock::run(arguments.at(2), arguments.at(3), argc, argv);
         // Last line before static destruction: an AV after this one is
         // not in Dock::run at all.
         qInfo("Dock::run returned %d", dockResult);
@@ -130,12 +155,16 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     app.setApplicationName("Desktops");
     app.setOrganizationName(QString());
+    // Without this the panel's window has no icon at all (WM_GETICON returns
+    // null for both sizes) and the taskbar shows the generic one, whatever the
+    // exe's resource says.
+    app.setWindowIcon(QIcon(QStringLiteral(":/resources/desktops.ico")));
     installLogging();
     {
         const std::wstring threadDesktop = wilx::TryGetThreadDesktopName();
         qInfo("manager starting: pid=%lu mainTid=%lu session=%s threadDesktop='%s' instancePipe='%s'",
             ::GetCurrentProcessId(), ::GetCurrentThreadId(), sessionTag().toUtf8().constData(),
-            QString::fromWCharArray(threadDesktop.c_str()).toUtf8().constData(),
+            QString::fromStdWString(threadDesktop).toUtf8().constData(),
             instancePipe().toUtf8().constData());
         for (int i = 0; i < argc; ++i)
             qInfo("manager arg[%d]='%s'", i, argv[i]);
