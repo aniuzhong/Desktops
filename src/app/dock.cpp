@@ -39,6 +39,7 @@ namespace
     constexpr wchar_t kPowershellSuffix[] = L"\\WindowsPowerShell\\v1.0\\powershell.exe";
     constexpr wchar_t kCmdSuffix[] = L"\\cmd.exe";
     constexpr wchar_t kNotepadSuffix[] = L"\\notepad.exe";
+    constexpr wchar_t kConhostSuffix[] = L"\\conhost.exe";
 
     // The fixed height keeps the layout and the positioning maths on one
     // number; kIconSize is 1:1 with the shell's large icon (SHGFI_LARGEICON),
@@ -485,20 +486,32 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
 
 bool Dock::launchCMD(const std::wstring& desktop, const char* source)
 {
-    // Console app. The path must stay backslash-spelled: a forward-slash
-    // command line makes cmd.exe exit at once (code 1) and windowless -
-    // seen on the 10:09 and 10:31 sessions and reproduced on the Default
-    // desktop, so plain cmd behavior, not a desktop effect.
-    return launch(systemDirectory() + kCmdSuffix, L"", desktop,
+    // Console app, hosted through an explicit conhost: with Windows
+    // Terminal as the default terminal (HKCU\Console\%%Startup) a bare
+    // cmd.exe has its console delegated to the packaged
+    // WindowsTerminal.exe, which creates the window on the Default
+    // desktop and ignores lpDesktop - reproduced here, the launch's
+    // window showed up in EnumDesktopWindows(Default), owned by
+    // WindowsTerminal. An explicitly launched conhost bypasses the
+    // delegation and creates its console window on the client's desktop.
+    // The path must stay backslash-spelled: a forward-slash command line
+    // makes cmd.exe exit at once (code 1) and windowless - seen on the
+    // 10:09 and 10:31 sessions and reproduced on the Default desktop, so
+    // plain cmd behavior, not a desktop effect.
+    return launch(systemDirectory() + kConhostSuffix,
+        L" \"" + systemDirectory() + kCmdSuffix + L"\"", desktop,
         CREATE_NEW_CONSOLE, source);
 }
 
 bool Dock::launchPowershell5(const std::wstring& desktop, const char* source)
 {
-    // Console app; -NoExit keeps the window up. Launches under either
-    // spelling - backslash kept as the one with the longer track record
-    // (10:57, 11:40 sessions).
-    return launch(systemDirectory() + kPowershellSuffix, L" -NoExit", desktop,
+    // Console app, same explicit-conhost hosting as launchCMD (with
+    // Windows Terminal as the default terminal the window would land on
+    // the Default desktop). -NoExit keeps the window up. Launches under
+    // either spelling - backslash kept as the one with the longer track
+    // record (10:57, 11:40 sessions).
+    return launch(systemDirectory() + kConhostSuffix,
+        L" \"" + systemDirectory() + kPowershellSuffix + L"\" -NoExit", desktop,
         CREATE_NEW_CONSOLE, source);
 }
 
