@@ -31,7 +31,6 @@
 #include "wallpaper.h"
 #include "wilx/desktop.h"
 #include "wilx/toolhelp.h"
-#include "wilx/win32_helpers.h"
 
 Q_LOGGING_CATEGORY(lcDock, "desktops.dock")
 

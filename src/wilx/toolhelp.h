@@ -6,7 +6,7 @@
 //    wilx - WIL-style extensions for Virtual Desktop.
 //    Header-only, shaped after wil: machinery earns a
 //    header (the Toolhelp snapshot iteration below),
-//    single-pattern helpers live in the win32_helpers.h
+//    single-pattern helpers live with their domain
 //    drawer. API contracts: wilx/README.md. Comments here
 //    only explain choices the code cannot show.
 //

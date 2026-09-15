@@ -29,5 +29,37 @@ bool DesktopTests()
     wilx::for_each_desktop_window_nothrow(inputDesktop.get(), [&](HWND) { ++windowsSeen; });
     CHECK(windowsSeen > 0);
 
+    // Name queries: total fail-soft, error-code, and exception regimes.
+    const std::wstring currentDesktop = wilx::TryGetThreadDesktopName();
+    CHECK(!currentDesktop.empty());
+
+    std::wstring named;
+    CHECK(SUCCEEDED(wilx::GetThreadDesktopNameNoThrow(GetCurrentThreadId(), named)));
+    CHECK(named == currentDesktop);
+    CHECK(SUCCEEDED(wilx::GetUserObjectNameNoThrow(GetProcessWindowStation(), named)));
+
+    std::wstring badName;
+    const HRESULT badHr = wilx::GetThreadDesktopNameNoThrow(0, badName);
+    CHECK(FAILED(badHr));
+    CHECK(badName.empty());
+    CHECK(HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE) == badHr);
+    CHECK(wilx::TryGetThreadDesktopName(GetCurrentThreadId()) == currentDesktop);
+
+#ifdef WIL_ENABLE_EXCEPTIONS
+    CHECK(wilx::GetThreadDesktopName(GetCurrentThreadId()) == currentDesktop);
+    CHECK(wilx::GetThreadDesktopName() == currentDesktop);
+
+    bool threw = false;
+    try
+    {
+        (void)wilx::GetThreadDesktopName(0);
+    }
+    catch (...)
+    {
+        threw = true;
+    }
+    CHECK(threw);
+#endif
+
     return true;
 }

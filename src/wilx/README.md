@@ -18,18 +18,20 @@ Header-only, WIL-style extensions for Virtual Desktop.
 
 | File | Theme |
 |---|---|
-| `desktop.h` | The window station / desktop subsystem: its three user-object families (`for_each_desktop`, `for_each_desktop_window`, `for_each_window_station`) share one trampoline — the shape wil's `windowing.h` uses for its three window enumerators |
-| `enum_callbacks.h` | Internal: the single parameterised Enum\* trampoline behind every `for_each_*` — machinery shared by *all* API headers, so it answers to none of them |
+| `desktop.h` | The window station / desktop subsystem: its three user-object families (`for_each_desktop`, `for_each_desktop_window`, `for_each_window_station`) share the one Enum\* trampoline in `wilx::details` — the shape wil's `windowing.h` uses for its three window enumerators — plus the name queries that read a desktop's identity back |
 | `toolhelp.h` | System process/thread iteration (`for_each_process`, `for_each_thread`) — snapshot iteration machinery |
-| `win32_helpers.h` | The drawer: user-object name queries (`Get*` throws, `TryGet*` fail-soft, `*NoThrow` returns the HRESULT), Win32 error messages, UTF-8 conversion, window text, window owner queries, tray icon RAII |
 
 File names follow wil's two patterns only: a **singular domain noun** (`desktop.h`, mirroring
-`filesystem.h` / `registry.h` / `windowing.h`) or **`<domain>_helpers.h`** when the domain word is
-plural (`win32_helpers.h`, mirroring `token_helpers.h` / `rpc_helpers.h`). A bare plural is neither.
+`filesystem.h` / `registry.h` / `windowing.h`) or **`<domain>_helpers.h`** — the second tier over a
+domain, whatever number its noun is (`registry_helpers.h` over `registry.h`, also `rpc_helpers.h`,
+`token_helpers.h`, `win32_helpers.h`). A bare plural is neither.
 
-`unique_notify_icon_data`: fill the fields (including `cbSize`), `NIM_ADD` it,
-and keep the object alive for as long as the icon should exist; deleting a
-never-added icon fails harmlessly (`wil::unique_prop_variant` semantics).
+There is no drawer: wilx is two domain headers. Wil's `win32_helpers.h` exists because it holds
+dozens of unrelated single-pattern helpers; a lone stray helper belongs to the domain it serves, and
+a `<domain>_helpers.h` of its own waits until the domain has a second tier to hold.
+
+Machinery stays with the API family that owns it, in `details` (as in wil's `windowing.h`); it earns
+its own header only when a *second* family needs it — the same grow-on-demand rule as everything else.
 
 ## Naming grammar
 
@@ -45,8 +47,8 @@ header that owns the name.
 | Result that must be used | `[[nodiscard]]` only when discarding the result discards the whole call — conversions, comparisons, RAII acquisitions, the way wil marks `compare_string_ordinal` and leaves `GetModuleFileNameW` bare |
 | Ownership | `unique_*` / `shared_*` = RAII; the handle type encodes the deleter |
 | Shape | `for_each_*` = callback-driven algorithm; callback returns void (continue), bool (false stops), or HRESULT (S_OK continues) |
-| API mirroring | The `W` suffix is kept iff the wrapped API has W/A duality and the function is (a narrowing of) that API (`TrySearchPathW`); narrowings and multi-API composites are descriptive without `W` (`TryGetUserObjectName`, `TryGetWindowText`) |
-| Placement | A theme header is earned by machinery or mass; single-pattern helpers go to `win32_helpers.h` |
+| API mirroring | The `W` suffix is kept iff the wrapped API has W/A duality and the function is (a narrowing of) that API (`TrySearchPathW`); narrowings and multi-API composites are descriptive without `W` (`TryGetThreadDesktopName` — GetThreadDesktop + GetUserObjectInformationW) |
+| Placement | A theme header is earned by machinery or mass; a single-pattern helper lives in the domain header it belongs to |
 
 ## Failure regime
 
@@ -62,8 +64,8 @@ that HRESULT; `TryGet*` stays the fail-soft default. The same seam exists in the
 `for_each_*` enumerators: a denied enumeration is indistinguishable from an
 empty one; grow a failure-carrying variant only when a caller truly needs it.
 
-The exception regime is present too, and only where a caller needs it: the
-`Get*` name queries throw (the `GetFileInfoNoThrow` / `GetFileInfo` pair), and
+The exception regime is present too, on the routines that have any caller: the
+`GetThreadDesktopName` query throws (the `GetFileInfoNoThrow` / `GetFileInfo` pair), and
 `for_each_desktop` / `for_each_desktop_window` / `for_each_window_station` are
 the throwing siblings of the `*_nothrow` enumerators. Both sit behind
 `WIL_ENABLE_EXCEPTIONS`, like wil's own exception-based routines — an
@@ -78,11 +80,12 @@ on MSVC — the annotation only makes an already-fatal mistake defined.
 
 ## Availability
 
-Every helper sits inside the `WINAPI_FAMILY_PARTITION` of the API it wraps:
-user-object queries and Toolhelp are `WINAPI_PARTITION_DESKTOP`, while
-`FormatMessageW`/`WideCharToMultiByte` helpers are left unpartitioned because
-every partition can reach them. Nothing in wilx claims availability it has not
-checked.
+Everything in wilx is `WINAPI_PARTITION_DESKTOP`, because every API it wraps is:
+window stations, desktops, their windows, their names, and Toolhelp snapshots
+are all desktop-only. Should a genuinely partition-agnostic helper arrive (wil's
+`FormatMessageW`/`WideCharToMultiByte`-based ones are not partitioned, and
+neither would ours be), it stands outside the guard. Nothing in wilx claims
+availability it has not checked.
 
 ## Deliberate deviations from wil
 
@@ -92,5 +95,3 @@ checked.
 - Total fail-soft `TryGet*` (wil's still surfaces unexpected failures)
 - `toolhelp.h` iterates inline (no C trampoline), so callback exceptions
   propagate and there is no `*_nothrow` split — declared in that header
-- No `wistd_*` header for shared machinery: `enum_callbacks.h` is named for
-  what it does and lives in `wilx::details`, not in a parallel namespace

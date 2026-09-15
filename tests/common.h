@@ -19,4 +19,3 @@
 
 bool DesktopTests();
 bool ToolhelpTests();
-bool Win32HelpersTests();

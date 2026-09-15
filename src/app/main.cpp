@@ -19,7 +19,7 @@
 
 #include "dock.h"
 #include "mainwindow.h"
-#include "wilx/win32_helpers.h"
+#include "wilx/desktop.h"
 
 namespace
 {
