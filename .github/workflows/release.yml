@@ -93,11 +93,41 @@ jobs:
           (cmake --preset static; cmake --build build-static --config Release).
           "@ | Set-Content stage/README.txt
 
+      - name: Extract release notes from CHANGELOG
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $changelogPath = "CHANGELOG.md"
+          
+          if (Test-Path $changelogPath) {
+            $changelog = Get-Content $changelogPath -Raw
+            
+            # Try to find the version section
+            $pattern = "## \[$version\].*?(?=## \[|$)"
+            if ($changelog -match $pattern) {
+              $releaseNotes = $matches[0].Trim()
+              $releaseNotes | Set-Content -Path "stage/RELEASE_NOTES.md" -Encoding UTF8
+              Write-Output "Extracted release notes for version $version"
+            } else {
+              Write-Output "No specific release notes found for version $version, using default"
+              "Release version $version" | Set-Content -Path "stage/RELEASE_NOTES.md" -Encoding UTF8
+            }
+          } else {
+            Write-Output "CHANGELOG.md not found, using default release notes"
+            "Release version $version" | Set-Content -Path "stage/RELEASE_NOTES.md" -Encoding UTF8
+          }
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
+          $releaseNotes = if (Test-Path "stage/RELEASE_NOTES.md") { 
+            Get-Content "stage/RELEASE_NOTES.md" -Raw 
+          } else { 
+            "Single-exe build (static Qt). Source: this repository." 
+          }
+          
           gh release create "$env:GITHUB_REF_NAME" --title "Desktops $env:GITHUB_REF_NAME" `
-            --notes "Single-exe build (static Qt). Source: this repository." `
+            --notes "$releaseNotes" `
             stage/Desktops.exe stage/THIRD-PARTY-NOTICES.txt stage/README.txt
