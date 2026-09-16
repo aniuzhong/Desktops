@@ -3,7 +3,6 @@
 #include <windows.h>
 
 #include <QtWidgets/QListWidget>
-#include <QtWidgets/QPushButton>
 #include <QtWidgets/QWidget>
 #include <QtNetwork/QLocalServer>
 #include <QtNetwork/QLocalSocket>
@@ -49,7 +48,6 @@ private:
         QLocalSocket* socket = nullptr;    // owned, null until the dock connects
         wil::unique_hdesk creationPin;     // held until ready releases it
         bool ready = false;                // handshake received
-        bool parked = true;                // hidden (not the input desktop's dock)
         bool active = false;               // input desktop is here
     };
 
@@ -77,8 +75,6 @@ private:
 
     QString instanceTag_;
     QListWidget* desktopList_;
-    QPushButton* newButton_;
-    QPushButton* switchButton_;
 
     std::map<std::wstring, DockEntry> docks_;
 };

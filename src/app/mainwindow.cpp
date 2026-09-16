@@ -2,14 +2,13 @@
 
 #include <windows.h>
 
-#include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QString>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -27,12 +26,6 @@ namespace
     // Desktops that are never ours to manage.
     const QStringList kReservedDesktops = {kDefaultDesktop, QStringLiteral("Winlogon"),
         QStringLiteral("Disconnect")};
-
-    void send(QLocalSocket* socket, const char* token)
-    {
-        socket->write(token);
-        socket->write("\n");
-    }
 
     QStringList listExtraDesktops()
     {
@@ -105,19 +98,16 @@ MainWindow::MainWindow(const QString& instanceTag, QWidget* parent)
     layout->addWidget(desktopList_, 1);
 
     auto* row = new QHBoxLayout;
-    newButton_ = new QPushButton("&New", this);
-    switchButton_ = new QPushButton("&Switch To", this);
-    row->addWidget(newButton_);
-    row->addWidget(switchButton_);
+    auto* newButton = new QPushButton("&New", this);
+    auto* switchButton = new QPushButton("&Switch To", this);
+    row->addWidget(newButton);
+    row->addWidget(switchButton);
     row->addStretch(1);
     layout->addLayout(row);
 
-    connect(newButton_, &QPushButton::clicked, this, &MainWindow::onNew);
-    connect(switchButton_, &QPushButton::clicked, this, &MainWindow::onSwitchTo);
-    connect(desktopList_, &QListWidget::itemDoubleClicked,
-        this, [this](QListWidgetItem*) { onSwitchTo(); });
-
-    refreshList();
+    connect(newButton, &QPushButton::clicked, this, &MainWindow::onNew);
+    connect(switchButton, &QPushButton::clicked, this, &MainWindow::onSwitchTo);
+    connect(desktopList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) { onSwitchTo(); });
 }
 
 void MainWindow::showEvent(QShowEvent* event)
@@ -137,9 +127,8 @@ void MainWindow::goHome()
     {
         if (entry.active && entry.socket && entry.socket->state() == QLocalSocket::ConnectedState)
         {
-            send(entry.socket, protocol::Park);
+            protocol::sendToken(entry.socket, protocol::Park);
             entry.active = false;
-            entry.parked = true;
         }
     }
     show();
@@ -200,9 +189,8 @@ bool MainWindow::switchTo(const QString& desktop)
             QString("Switching to '%1' did not take effect.").arg(desktop));
         return false;
     }
-    send(entry->socket, protocol::Activate);
+    protocol::sendToken(entry->socket, protocol::Activate);
     entry->active = true;
-    entry->parked = false;
     return true;
 }
 
@@ -375,10 +363,7 @@ void MainWindow::dropDock(const std::wstring& desktop)
         return;
     auto& entry = it->second;
     if (entry.socket && entry.socket->state() == QLocalSocket::ConnectedState)
-    {
-        send(entry.socket, protocol::Exit);
-        entry.socket->flush();
-    }
+        protocol::sendToken(entry.socket, protocol::Exit);
     if (entry.socket)
         entry.socket->deleteLater();
     if (entry.server)

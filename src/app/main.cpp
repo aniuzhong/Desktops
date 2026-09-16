@@ -12,9 +12,7 @@
 #include <QStandardPaths>
 #include <QString>
 
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <exception>
 #include <string>
 
@@ -175,9 +173,7 @@ int main(int argc, char* argv[])
         probe.connectToServer(instancePipe());
         if (probe.waitForConnected(300))
         {
-            probe.write(protocol::Home);
-            probe.write("\n");
-            probe.flush();
+            protocol::sendToken(&probe, protocol::Home);
             probe.waitForBytesWritten(500);
             return 0;
         }

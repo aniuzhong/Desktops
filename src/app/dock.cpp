@@ -192,22 +192,25 @@ namespace
     }
 
     // HICON -> QIcon without QtWinExtras (dropped in Qt 6): pull the
-    // 32bpp color bitmap via GetDIBits and wrap it in a QPixmap. It copies the
-    // bits and releases the ICONINFO bitmaps GetIconInfo allocated, but never
-    // `icon` itself - the caller owns it and destroys it exactly once. Destroying
-    // twice does not crash (the second call just fails with
-    // ERROR_INVALID_CURSOR_HANDLE), but the handle value may already have been
-    // reused, which would destroy somebody else's icon.
+    // 32bpp color bitmap via GetDIBits and wrap it in a QPixmap. `icon` is
+    // never touched - the caller owns it and destroys it exactly once
+    // (DestroyIcon twice does not crash, it only fails with
+    // ERROR_INVALID_CURSOR_HANDLE, but the handle value may already have been
+    // reused, which would destroy somebody else's icon).
     QIcon iconFromHicon(HICON icon)
     {
         ICONINFO info{};
         if (!::GetIconInfo(icon, &info))
             return {};
+        // GetIconInfo owns both bitmaps it hands back; only the colour one
+        // is read, the mask is carried here for its lifetime alone.
+        const wil::unique_hbitmap color(info.hbmColor);
+        const wil::unique_hbitmap mask(info.hbmMask);
         QImage image;
-        if (info.hbmColor)
+        if (color)
         {
             BITMAP bitmap{};
-            if (::GetObjectW(info.hbmColor, sizeof(bitmap), &bitmap) != 0)
+            if (::GetObjectW(color.get(), sizeof(bitmap), &bitmap) != 0)
             {
                 BITMAPINFOHEADER header{};
                 header.biSize = sizeof(header);
@@ -218,15 +221,11 @@ namespace
                 header.biCompression = BI_RGB;
                 image = QImage(bitmap.bmWidth, bitmap.bmHeight, QImage::Format_ARGB32);
                 HDC dc = ::CreateCompatibleDC(nullptr);
-                ::GetDIBits(dc, info.hbmColor, 0, static_cast<UINT>(bitmap.bmHeight),
+                ::GetDIBits(dc, color.get(), 0, static_cast<UINT>(bitmap.bmHeight),
                     image.bits(), reinterpret_cast<BITMAPINFO*>(&header), DIB_RGB_COLORS);
                 ::DeleteDC(dc);
             }
         }
-        if (info.hbmColor)
-            ::DeleteObject(info.hbmColor);
-        if (info.hbmMask)
-            ::DeleteObject(info.hbmMask);
         if (image.isNull())
             return {};
         return QPixmap::fromImage(image);
@@ -241,11 +240,9 @@ namespace
                 SHGFI_ICON | SHGFI_LARGEICON)
             == 0)
             return {};
-        // SHGetFileInfoW owns the icon it hands back: convert, then destroy it
-        // exactly once.
-        const QIcon icon = iconFromHicon(info.hIcon);
-        ::DestroyIcon(info.hIcon);
-        return icon;
+        // SHGetFileInfoW owns the icon it hands back.
+        const wil::unique_hicon owned(info.hIcon);
+        return iconFromHicon(owned.get());
     }
 
     // For icons with no executable file to name: the Win+R "Run" icon,
@@ -253,24 +250,16 @@ namespace
     QIcon resourceIcon(const std::wstring& path, int resourceId)
     {
         // Not `large`/`small`: the SDK's MIDL headers #define small as char.
-        HICON largeIcon = nullptr;
-        HICON smallIcon = nullptr;
-        const int extracted = ::ExtractIconExW(path.c_str(), -resourceId, &largeIcon,
-            &smallIcon, 1);
-        if (extracted <= 0 || !largeIcon)
+        // ExtractIconExW owns both icons it hands back, and may fill either
+        // even when it fails, so both are taken into RAII before any return.
+        wil::unique_hicon largeIcon;
+        wil::unique_hicon smallIcon;
+        if (::ExtractIconExW(path.c_str(), -resourceId, largeIcon.addressof(),
+                smallIcon.addressof(), 1) <= 0 || !largeIcon)
         {
-            if (largeIcon)
-                ::DestroyIcon(largeIcon);
-            if (smallIcon)
-                ::DestroyIcon(smallIcon);
             return {};
         }
-        // ExtractIconExW owns both icons it hands back.
-        const QIcon icon = iconFromHicon(largeIcon);
-        ::DestroyIcon(largeIcon);
-        if (smallIcon)
-            ::DestroyIcon(smallIcon);
-        return icon;
+        return iconFromHicon(largeIcon.get());
     }
 
     // The app's own SVG (embedded via desktops.qrc), rendered at 3x for
@@ -499,11 +488,6 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     QWidget* wallpaper = nullptr;
     QWidget* dock = nullptr;
 
-    const auto send = [&socket](const char* token) {
-        socket.write(token);
-        socket.write("\n", 1);
-        socket.flush();
-    };
     // Launches run on detached workers: CreateProcessW onto a desktop can
     // block for a long while and the dock's UI thread must never freeze
     // behind it. Workers touch only their own copies and the thread-safe
@@ -525,7 +509,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     };
     const auto onDefault = [&] {
         qCInfo(lcDock, "HOME pressed - requesting input back to Default");
-        send(protocol::Home);
+        protocol::sendToken(&socket, protocol::Home);
         if (dock)
             dock->hide();   // park immediately; the manager moves input
     };
@@ -576,7 +560,7 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         delete dock;
         return 2;
     }
-    send(protocol::Ready);
+    protocol::sendToken(&socket, protocol::Ready);
     qCInfo(lcDock, "ready reported to manager");
 
     QObject::connect(&socket, &QLocalSocket::readyRead, [&] {

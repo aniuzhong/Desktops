@@ -2,11 +2,11 @@
 
 #include <windows.h>
 
+#include <QtNetwork/QLocalSocket>
+
 #include <QString>
-#include <QLoggingCategory>
 
 #include <string>
-#include <vector>
 
 // One ASCII token per message, '\n'-terminated on the wire; each side
 // buffers and splits on '\n'. The protocol lives with the dock: the dock
@@ -21,6 +21,16 @@ namespace protocol
     inline constexpr char Activate[] = "activate";
     inline constexpr char Park[] = "park";
     inline constexpr char Exit[] = "exit";
+
+    // The whole framing is the terminator, so writing a token is two writes.
+    // Flushed: the dock's Ready/Home are the two messages whose sender may
+    // have nothing left to do (and no event loop left to run) after them.
+    inline void sendToken(QLocalSocket* socket, const char* token)
+    {
+        socket->write(token);
+        socket->write("\n");
+        socket->flush();
+    }
 }
 
 // The dock process (main.cpp --dock <desktop> <pipe>). The process's main
