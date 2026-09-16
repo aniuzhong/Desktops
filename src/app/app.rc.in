@@ -1,6 +1,33 @@
-// Desktops resources: just the application icon. The first icon resource
-// becomes the exe icon (Explorer, taskbar) and the default QWidget window
-// icon. The Common-Controls v6 dependency is injected via the linker's
-// /MANIFESTDEPENDENCY (see CMakeLists.txt); Qt 6 defaults to PerMonitorV2
-// DPI awareness, so no manifest file is needed at all.
+// Desktops resources: the application icon and the version resource. The
+// first icon resource becomes the exe icon (Explorer, taskbar) and the
+// default QWidget window icon. The Common-Controls v6 dependency is
+// injected via the linker's /MANIFESTDEPENDENCY (see CMakeLists.txt); Qt 6
+// defaults to PerMonitorV2 DPI awareness, so no manifest file is needed at
+// all.
+//
+// The version comes from project() in CMakeLists.txt - that call is its
+// single source, and this resource is how it reaches the exe's properties.
 1 ICON "resources/desktops.ico"
+
+1 VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,@PROJECT_VERSION_TWEAK@
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,@PROJECT_VERSION_TWEAK@
+FILEOS 0x00040004L
+FILETYPE 0x00000001L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Desktops"
+            VALUE "FileDescription", "Desktops - Windows desktops"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "ProductName", "Desktops"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

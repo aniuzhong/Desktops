@@ -28,7 +28,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    # Pinned, not windows-latest: vcpkg's ABI hash covers the compiler, so
+    # a runner image upgrade would rebuild every package even with a warm
+    # binary cache. windows-2025 is what windows-latest resolves to today.
+    runs-on: windows-2025
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg.exe
@@ -120,8 +123,9 @@ jobs:
           if (Test-Path $changelogPath) {
             $changelog = Get-Content $changelogPath -Raw
             
-            # Try to find the version section
-            $pattern = "## \[$version\].*?(?=## \[|$)"
+            # Try to find the version section. (?s) is load-bearing: without
+            # it `.` stops at the first newline and the section never matches.
+            $pattern = "(?s)## \[$version\].*?(?=## \[|$)"
             if ($changelog -match $pattern) {
               $releaseNotes = $matches[0].Trim()
               $releaseNotes | Set-Content -Path "stage/RELEASE_NOTES.md" -Encoding UTF8
@@ -136,6 +140,9 @@ jobs:
           }
 
       - name: Create release
+        # workflow_dispatch has no tag: without this a manual run on main
+        # creates a release named after the branch.
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
