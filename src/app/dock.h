@@ -13,29 +13,25 @@
 // defines it, the manager speaks it.
 namespace protocol
 {
-    // dock -> manager
     inline constexpr char Ready[] = "ready";
     inline constexpr char Home[] = "home";
 
-    // manager -> dock: Activate when the input desktop moved here, Park
-    // when it moved away (hide, keep running), Exit to shut down.
+    // Activate when the input desktop moved here, Park when it moved
+    // away (hide, keep running), Exit to shut down.
     inline constexpr char Activate[] = "activate";
     inline constexpr char Park[] = "park";
     inline constexpr char Exit[] = "exit";
 }
 
-// The dock process (main.cpp --dock <desktop> <pipe>): owns the dock bar
-// and every launch performed from it. The process's main thread starts on
-// the target desktop via lpDesktop, so QApplication initializes there
-// without any SetThreadDesktop. Runs until the manager sends Exit; HOME is
-// a request ("home"), never self-destruction.
+// The dock process (main.cpp --dock <desktop> <pipe>). The process's main
+// thread starts on the target desktop via lpDesktop, so QApplication
+// initializes there without any SetThreadDesktop. Runs until the manager
+// sends Exit; HOME is a request ("home"), never self-destruction.
 class Dock
 {
 public:
-    // Composes the dock (hidden at birth: a fresh desktop is never
-    // auto-entered), connects to the manager's per-dock socket, sends
-    // Ready, and runs the event loop until Exit. `desktop` must match
-    // the desktop this process was launched on.
+    // Hidden at birth: a fresh desktop is never auto-entered. `desktop`
+    // must match the desktop this process was launched on.
     static int run(const QString& desktop, const QString& pipeName, int argc, char** argv);
 
     // Per-app cross-desktop launches. Cross-desktop process creation has

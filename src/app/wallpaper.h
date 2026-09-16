@@ -33,7 +33,6 @@ private:
     QPixmap image_;
 };
 
-// Reads the image Windows is set to use and wraps it in a Wallpaper.
 // Null when no image can be shown: the desktop then keeps the system
 // colour, which is the honest fallback.
 QWidget* composeWallpaper();
