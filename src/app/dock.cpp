@@ -13,6 +13,8 @@
 #include <QImage>
 #include <QLocalSocket>
 #include <QLoggingCategory>
+#include <QAction>
+#include <QMenu>
 #include <QPixmap>
 #include <QString>
 #include <QToolButton>
@@ -21,6 +23,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <functional>
 #include <string>
 #include <thread>
@@ -111,6 +114,49 @@ namespace
         char text[48];
         std::snprintf(text, sizeof(text), "exited with code %lu", code);
         return text;
+    }
+
+    std::wstring windowTitle(HWND window)
+    {
+        // SendMessageTimeout, not GetWindowText: a cross-process WM_GETTEXT
+        // that hangs would hang the dock's UI thread with it.
+        std::wstring title(512, L'\0');
+        DWORD_PTR copied = 0;
+        if (!::SendMessageTimeoutW(window, WM_GETTEXT, title.size(),
+                reinterpret_cast<LPARAM>(title.data()), SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &copied))
+        {
+            return {};
+        }
+        title.resize(copied);
+        return title;
+    }
+
+    std::wstring processImagePath(DWORD pid)
+    {
+        wil::unique_handle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+        if (!process)
+            return {};
+        wchar_t path[MAX_PATH] = {};
+        DWORD size = MAX_PATH;
+        return ::QueryFullProcessImageNameW(process.get(), 0, path, &size)
+            ? std::wstring(path, size)
+            : std::wstring {};
+    }
+
+    // A window the user minimized and would expect to find again: iconic but
+    // still visible (minimizing clears neither WS_VISIBLE nor the
+    // enumeration), not a tool window, unowned or explicitly asking for a
+    // taskbar button, and not one of ours.
+    bool isRestorableWindow(HWND window, DWORD pid)
+    {
+        if (pid == ::GetCurrentProcessId() || !::IsIconic(window) || !::IsWindowVisible(window))
+            return false;
+        const LONG_PTR extended = ::GetWindowLongPtrW(window, GWL_EXSTYLE);
+        if ((extended & WS_EX_TOOLWINDOW) && !(extended & WS_EX_APPWINDOW))
+            return false;
+        if (::GetWindow(window, GW_OWNER) && !(extended & WS_EX_APPWINDOW))
+            return false;
+        return true;
     }
 
     // Arrival proof for launches: the launched process cannot handshake,
@@ -253,6 +299,89 @@ namespace
             return {};
         }
         return QString::fromUtf8(file.readAll());
+    }
+
+    struct MinimizedWindow
+    {
+        HWND window = nullptr;
+        QString name;
+        QString detail;
+        QIcon icon;
+    };
+
+    // The title, unless it is the console host spelling its own path out or
+    // missing altogether - then the executable's own name says more.
+    QString minimizedWindowName(HWND window, const std::wstring& image)
+    {
+        const QString title = QString::fromStdWString(windowTitle(window));
+        if (!title.trimmed().isEmpty()
+            && title.compare(QString::fromStdWString(image), Qt::CaseInsensitive) != 0)
+        {
+            return title;
+        }
+        return QString::fromStdWString(image.substr(image.find_last_of(L"\\/") + 1));
+    }
+
+    QIcon iconForExecutable(const std::wstring& image)
+    {
+        // At most once per executable: the menu is rebuilt on every
+        // right-click and SHGetFileInfoW is not free.
+        static std::map<std::wstring, QIcon> cache;
+        const auto it = cache.find(image);
+        if (it != cache.end())
+            return it->second;
+        const QIcon icon = executableIcon(image);
+        cache.emplace(image, icon);
+        return icon;
+    }
+
+    std::vector<MinimizedWindow> collectMinimizedWindows(HDESK desktop)
+    {
+        std::vector<MinimizedWindow> found;
+        wilx::for_each_desktop_window_nothrow(desktop, [&](HWND window) {
+            DWORD pid = 0;
+            ::GetWindowThreadProcessId(window, &pid);
+            if (!isRestorableWindow(window, pid))
+                return true;
+            const std::wstring image = processImagePath(pid);
+            MinimizedWindow entry;
+            entry.window = window;
+            entry.name = minimizedWindowName(window, image);
+            entry.detail = QString("%1 (pid %2)")
+                .arg(QString::fromStdWString(image), QString::number(pid));
+            entry.icon = iconForExecutable(image);
+            found.push_back(std::move(entry));
+            return true;
+        });
+        return found;
+    }
+
+    // A minimized window has no shell to represent it on a desktop like this
+    // one, so the bar lists them on right-click rather than wearing them:
+    // buttons for them pushed the centred launchers off centre. Only the
+    // noticing is ours - putting a window back is ShowWindow +
+    // SetForegroundWindow, and the focus hand-off works from here because
+    // the click that reached us is the last input event.
+    void showMinimizedMenu(HDESK desktop, const QPoint& position)
+    {
+        QMenu menu;
+        const std::vector<MinimizedWindow> windows = collectMinimizedWindows(desktop);
+        if (windows.empty())
+            menu.addAction("No minimized windows")->setEnabled(false);
+        for (const MinimizedWindow& entry : windows)
+        {
+            QAction* action = menu.addAction(entry.icon, entry.name);
+            action->setToolTip(entry.detail);
+            QObject::connect(action, &QAction::triggered, [window = entry.window] {
+                if (!::IsWindow(window))   // gone while the menu was open
+                    return;
+                ::ShowWindow(window, SW_RESTORE);
+                if (!::SetForegroundWindow(window))
+                    qCInfo(lcDock, "restore: SetForegroundWindow(hwnd=%p) failed (%lu)",
+                        window, ::GetLastError());
+            });
+        }
+        menu.exec(position);
     }
 
     // A full-width bar docked to the bottom edge. This desktop has no
@@ -431,6 +560,12 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
 
     dock = composeDock(desktop, onDefault, onPowerShell, onCmd, onNotepad, onRun);
     positionAlongBottom(dock);
+    // Collected on demand, so there is nothing to poll: the menu is only
+    // ever built while the user is looking at it.
+    dock->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(dock, &QWidget::customContextMenuRequested, [&](const QPoint& position) {
+        showMinimizedMenu(desktopPin.get(), dock->mapToGlobal(position));
+    });
 
     socket.connectToServer(pipeName);
     if (!socket.waitForConnected(5000))
