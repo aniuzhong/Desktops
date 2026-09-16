@@ -22,7 +22,7 @@
 #include <QPainter>
 
 #include <algorithm>
-#include <cstdio>
+#include <format>
 #include <map>
 #include <functional>
 #include <string>
@@ -111,9 +111,7 @@ namespace
             return "exit code unavailable";
         if (code == STILL_ACTIVE)
             return "still running";
-        char text[48];
-        std::snprintf(text, sizeof(text), "exited with code %lu", code);
-        return text;
+        return std::format("exited with code {}", code);
     }
 
     std::wstring windowTitle(HWND window)
