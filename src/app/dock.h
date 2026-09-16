@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <QCoreApplication>
 #include <QtNetwork/QLocalSocket>
 
 #include <QString>
@@ -41,8 +42,11 @@ class Dock
 {
 public:
     // Hidden at birth: a fresh desktop is never auto-entered. `desktop`
-    // must match the desktop this process was launched on.
-    static int run(const QString& desktop, const QString& pipeName, int argc, char** argv);
+    // must match the desktop this process was launched on. Runs the event
+    // loop of the caller's one and only QApplication - a second one in this
+    // process silently replaces qApp, and destroying the orphaned first was
+    // the dock's exit AV.
+    static int run(QCoreApplication& app, const QString& desktop, const QString& pipeName);
 
     // Per-app cross-desktop launches. Cross-desktop process creation has
     // app-specific failure modes on this machine, so each function below

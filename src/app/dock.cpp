@@ -364,7 +364,7 @@ namespace
                     return;
                 ::ShowWindow(window, SW_RESTORE);
                 if (!::SetForegroundWindow(window))
-                    qCInfo(lcDock, "restore: SetForegroundWindow(hwnd=%p) failed (%lu)",
+                    qCWarning(lcDock, "restore: SetForegroundWindow(hwnd=%p) failed (%lu)",
                         window, ::GetLastError());
             });
         }
@@ -444,20 +444,12 @@ namespace
     }
 }  // namespace
 
-int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** argv)
+int Dock::run(QCoreApplication& app, const QString& desktop, const QString& pipeName)
 {
-    // The process was launched with lpDesktop=<desktop>: this main
-    // thread is already attached, so QApplication initializes on the
-    // target desktop without any SetThreadDesktop.
+    // The process was launched with lpDesktop=<desktop>: this main thread is
+    // already attached, so Qt initialized on the target desktop without any
+    // SetThreadDesktop.
     //
-    // Disable IME/TSF BEFORE Qt initializes: text services on non-default
-    // desktops are half-broken (README Known Problems; they spawn a TSF
-    // thread + Cicero windows per desktop and correlate with the heap
-    // corruption in WER). Typing keeps working; only composition is lost,
-    // which never worked here anyway.
-    ::ImmDisableIME(0);
-
-    QApplication app(argc, argv);
     // This process lives and dies by the manager's pipe (protocol::Exit),
     // not by its windows: a dock can legitimately have no visible window
     // for long stretches, and the Run dialog closing is not a reason to
@@ -467,12 +459,6 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     QApplication::setQuitOnLastWindowClosed(false);
 
     const std::wstring desktopWide = desktop.toStdWString();
-    qCInfo(lcDock,
-        "dock starting: desktop='%s' pipe='%s' pid=%lu mainTid=%lu threadDesktop='%s' (verifies the lpDesktop attach)",
-        desktop.toUtf8().constData(), pipeName.toUtf8().constData(),
-        ::GetCurrentProcessId(),
-        ::GetCurrentThreadId(),
-        QString::fromStdWString(wilx::TryGetThreadDesktopName()).toUtf8().constData());
     const wil::unique_hdesk desktopPin(
         ::OpenDesktopW(desktopWide.c_str(), 0, FALSE, GENERIC_ALL));
     if (!desktopPin)
@@ -559,15 +545,11 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
         return 2;
     }
     protocol::sendToken(&socket, protocol::Ready);
-    qCInfo(lcDock, "ready reported to manager");
 
     QObject::connect(&socket, &QLocalSocket::readyRead, [&] {
         while (socket.canReadLine())
         {
             const QByteArray line = socket.readLine().trimmed();
-            // Every instruction is logged: when the bar once vanished, the
-            // absence of a logged Park/Exit was the only clue there was.
-            qCInfo(lcDock, "manager sent '%s'", line.constData());
             if (line == protocol::Activate && dock)
             {
                 // No activateWindow(): the bar must not take focus, so
@@ -581,7 +563,6 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
             }
             else if (line == protocol::Exit)
             {
-                qCInfo(lcDock, "exit requested by manager");
                 app.quit();
             }
         }
@@ -595,7 +576,6 @@ int Dock::run(const QString& desktop, const QString& pipeName, int argc, char** 
     });
 
     const int code = app.exec();
-    qCInfo(lcDock, "dock for '%s' exiting with code %d", desktop.toUtf8().constData(), code);
     delete wallpaper;
     delete dock;
     return code;
@@ -659,31 +639,18 @@ bool Dock::launch(const std::wstring& exe, const std::wstring& args,
     si.cb = sizeof(si);
     si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
     PROCESS_INFORMATION pi{};
-    qCInfo(lcDock,
-        "[%s] CreateProcessW: exe='%s' args='%s' cmd='%s' lpDesktop='%s' flags=0x%lx "
-        "callerPid=%lu callerTid=%lu",
-        source, QString::fromStdWString(exe).toUtf8().constData(),
-        QString::fromStdWString(args).toUtf8().constData(),
-        QString::fromStdWString(command).toUtf8().constData(),
-        QString::fromStdWString(desktop).toUtf8().constData(),
-        creationFlags, ::GetCurrentProcessId(), ::GetCurrentThreadId());
-    const ULONGLONG createStartedAt = ::GetTickCount64();
     const BOOL ok = ::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
         creationFlags, nullptr, nullptr, &si, &pi);
-    const unsigned long long createTook = ::GetTickCount64() - createStartedAt;
     if (!ok)
     {
         qCWarning(lcDock, "[%s] CreateProcessW('%s') failed (%lu)",
             source, QString::fromStdWString(exe).toUtf8().constData(), ::GetLastError());
         return false;
     }
-    qCInfo(lcDock, "[%s] launched pid=%lu in %llums", source, pi.dwProcessId, createTook);
     ::CloseHandle(pi.hThread);
     ::CloseHandle(pi.hProcess);
     const bool arrived = newWindowArrived(desktop, before, pi.dwProcessId, 5000);
-    if (arrived)
-        qCInfo(lcDock, "[%s] arrival ok", source);
-    else
+    if (!arrived)
         qCWarning(lcDock, "[%s] no window arrived on the desktop within 5s (pid=%lu %s)",
             source, pi.dwProcessId, processExitState(pi.dwProcessId).c_str());
     return true;
