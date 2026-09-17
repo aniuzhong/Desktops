@@ -22,7 +22,6 @@
 #include <QPainter>
 
 #include <algorithm>
-#include <format>
 #include <map>
 #include <functional>
 #include <string>
@@ -60,7 +59,7 @@ namespace
 
     std::wstring forwardSlashed(std::wstring path)
     {
-        std::replace(path.begin(), path.end(), wchar_t(92), wchar_t(47));
+        std::replace(path.begin(), path.end(), L'\\', L'/');
         return path;
     }
 
@@ -100,18 +99,17 @@ namespace
 
     // Disposition of a launch that never produced a window: still running
     // or the exit code, the only trace left on a desktop no one can see.
-    std::string processExitState(DWORD pid)
+    QString processExitState(DWORD pid)
     {
-        wil::unique_handle process(
-            ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+        wil::unique_handle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
         if (!process)
-            return "already exited";
+            return QStringLiteral("already exited");
         DWORD code = 0;
         if (!::GetExitCodeProcess(process.get(), &code))
-            return "exit code unavailable";
+            return QStringLiteral("exit code unavailable");
         if (code == STILL_ACTIVE)
-            return "still running";
-        return std::format("exited with code {}", code);
+            return QStringLiteral("still running");
+        return QString("exited with code %1").arg(code);
     }
 
     std::wstring windowTitle(HWND window)
@@ -120,8 +118,7 @@ namespace
         // that hangs would hang the dock's UI thread with it.
         std::wstring title(512, L'\0');
         DWORD_PTR copied = 0;
-        if (!::SendMessageTimeoutW(window, WM_GETTEXT, title.size(),
-                reinterpret_cast<LPARAM>(title.data()), SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &copied))
+        if (!::SendMessageTimeoutW(window, WM_GETTEXT, title.size(), reinterpret_cast<LPARAM>(title.data()), SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &copied))
         {
             return {};
         }
@@ -163,8 +160,7 @@ namespace
     // window belongs to conhost.exe, whose parent is the launched
     // process). Strict ownership keeps overlapping launches from claiming
     // each other's windows.
-    bool newWindowArrived(HDESK desktop, const std::vector<DWORD>& before,
-        DWORD launchedPid, unsigned timeoutMs)
+    bool newWindowArrived(HDESK desktop, const std::vector<DWORD>& before, DWORD launchedPid, unsigned timeoutMs)
     {
         const ULONGLONG deadline = ::GetTickCount64() + timeoutMs;
         for (;;)
@@ -189,41 +185,15 @@ namespace
         return handle && newWindowArrived(handle.get(), before, launchedPid, timeoutMs);
     }
 
-    // HICON -> QIcon without QtWinExtras (dropped in Qt 6): pull the
-    // 32bpp color bitmap via GetDIBits and wrap it in a QPixmap. `icon` is
-    // never touched - the caller owns it and destroys it exactly once
-    // (DestroyIcon twice does not crash, it only fails with
-    // ERROR_INVALID_CURSOR_HANDLE, but the handle value may already have been
-    // reused, which would destroy somebody else's icon).
+    // HICON -> QIcon via Qt's own Windows conversion (QImage::fromHICON,
+    // Qt 6.9+ - the official replacement for the QtWinExtras dropped in
+    // Qt 6). `icon` is never touched - the caller owns it and destroys it
+    // exactly once (DestroyIcon twice does not crash, it only fails with
+    // ERROR_INVALID_CURSOR_HANDLE, but the handle value may already have
+    // been reused, which would destroy somebody else's icon).
     QIcon iconFromHicon(HICON icon)
     {
-        ICONINFO info{};
-        if (!::GetIconInfo(icon, &info))
-            return {};
-        // GetIconInfo owns both bitmaps it hands back; only the colour one
-        // is read, the mask is carried here for its lifetime alone.
-        const wil::unique_hbitmap color(info.hbmColor);
-        const wil::unique_hbitmap mask(info.hbmMask);
-        QImage image;
-        if (color)
-        {
-            BITMAP bitmap{};
-            if (::GetObjectW(color.get(), sizeof(bitmap), &bitmap) != 0)
-            {
-                BITMAPINFOHEADER header{};
-                header.biSize = sizeof(header);
-                header.biWidth = bitmap.bmWidth;
-                header.biHeight = -bitmap.bmHeight;   // top-down
-                header.biPlanes = 1;
-                header.biBitCount = 32;
-                header.biCompression = BI_RGB;
-                image = QImage(bitmap.bmWidth, bitmap.bmHeight, QImage::Format_ARGB32);
-                HDC dc = ::CreateCompatibleDC(nullptr);
-                ::GetDIBits(dc, color.get(), 0, static_cast<UINT>(bitmap.bmHeight),
-                    image.bits(), reinterpret_cast<BITMAPINFO*>(&header), DIB_RGB_COLORS);
-                ::DeleteDC(dc);
-            }
-        }
+        const QImage image = QImage::fromHICON(icon);
         if (image.isNull())
             return {};
         return QPixmap::fromImage(image);
@@ -638,7 +608,7 @@ bool Dock::launch(const std::wstring& exe, const std::wstring& args,
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.lpDesktop = const_cast<LPWSTR>(desktop.c_str());
-    PROCESS_INFORMATION pi{};
+    wil::unique_process_information pi;
     const BOOL ok = ::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
         creationFlags, nullptr, nullptr, &si, &pi);
     if (!ok)
@@ -647,12 +617,10 @@ bool Dock::launch(const std::wstring& exe, const std::wstring& args,
             source, QString::fromStdWString(exe).toUtf8().constData(), ::GetLastError());
         return false;
     }
-    ::CloseHandle(pi.hThread);
-    ::CloseHandle(pi.hProcess);
     const bool arrived = newWindowArrived(desktop, before, pi.dwProcessId, 5000);
     if (!arrived)
         qCWarning(lcDock, "[%s] no window arrived on the desktop within 5s (pid=%lu %s)",
-            source, pi.dwProcessId, processExitState(pi.dwProcessId).c_str());
+            source, pi.dwProcessId, processExitState(pi.dwProcessId).toUtf8().constData());
     return true;
 }
 

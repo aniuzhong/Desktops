@@ -9,7 +9,6 @@
 #include <QLoggingCategory>
 
 #include <map>
-#include <string>
 
 #include <wil/resource.h>
 
@@ -62,19 +61,22 @@ private:
 
     // With a creation pin the desktop must already exist; without one
     // this is an adoption of an already-running desktop.
-    bool spawnDock(const std::wstring& desktop, wil::unique_hdesk creationPin);
+    bool spawnDock(const QString& desktop, wil::unique_hdesk creationPin);
 
-    void onDockConnection(const std::wstring& desktop);
-    void onDockSocketReadyRead(const std::wstring& desktop);
-    void onDockDisconnected(const std::wstring& desktop);
-    void onDockReady(const std::wstring& desktop);
+    void onDockConnection(const QString& desktop);
+    void onDockSocketReadyRead(const QString& desktop);
+    void onDockDisconnected(const QString& desktop);
+    void onDockReady(const QString& desktop);
 
-    DockEntry* find(const std::wstring& desktop);
-    void dropDock(const std::wstring& desktop);
+    DockEntry* find(const QString& desktop);
+    void dropDock(const QString& desktop);
     QString selectedDesktop() const;
 
     QString instanceTag_;
     QListWidget* desktopList_;
 
-    std::map<std::wstring, DockEntry> docks_;
+    // QHash/QMap are implicitly shared and copy their elements on detach,
+    // so the move-only DockEntry (unique_hdesk) lives in a std::map - keyed
+    // by QString, the natural currency of every caller.
+    std::map<QString, DockEntry> docks_;
 };

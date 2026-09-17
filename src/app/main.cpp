@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -50,9 +51,9 @@ namespace
 
     void logHandler(QtMsgType type, const QMessageLogContext&, const QString& message)
     {
-        QMutexLocker lock(&g_logMutex);
+        const QMutexLocker lock(&g_logMutex);
         QFile file(g_logPath);
-        if (file.exists() && file.size() > 1024 * 1024)
+        if (file.size() > 1024 * 1024)
         {
             QFile::remove(g_logPath + ".1");
             QFile::rename(g_logPath, g_logPath + ".1");
@@ -75,28 +76,6 @@ namespace
         g_logPath = dir + "/desktops.log";
         qInstallMessageHandler(logHandler);
     }
-    // The command line is how the manager hands a dock its identity, and that
-    // identity is Unicode: main's argv has already been converted through the
-    // process ANSI code page (1252 on this machine), which turns a desktop
-    // named 桌面1 into "??1". Read the wide command line instead; QApplication
-    // still gets the original argc/argv.
-    QStringList wideArguments()
-    {
-        int count = 0;
-        LPWSTR* wide = ::CommandLineToArgvW(::GetCommandLineW(), &count);
-        if (!wide)
-        {
-            return {};
-        }
-        QStringList arguments;
-        arguments.reserve(count);
-        for (int i = 0; i < count; ++i)
-        {
-            arguments.append(QString::fromWCharArray(wide[i]));
-        }
-        ::LocalFree(wide);
-        return arguments;
-    }
 }  // namespace
 
 int main(int argc, char* argv[])
@@ -104,21 +83,25 @@ int main(int argc, char* argv[])
     // Light theme regardless of the system's dark-mode preference.
     qputenv("QT_QPA_PLATFORM", "windows:darkmode=0");
 
-    const QStringList arguments = wideArguments();
+    // This is the process's only QApplication: a second one silently
+    // replaces qApp and leaves the first to be destroyed against
+    // already-torn-down Qt state - that was the dock's exit AV.
+    QApplication app(argc, argv);
+    app.setApplicationName("Desktops");
+
+    // The command line is how the manager hands a dock its identity, and
+    // that identity is Unicode: arguments() reads the wide command line
+    // (GetCommandLine), not main's argv, which the CRT has already converted
+    // through the process ANSI code page (1252 on this machine) - that turns
+    // a desktop named 桌面1 into "??1".
+    const QStringList arguments = QCoreApplication::arguments();
 
     if (arguments.size() >= 4 && arguments.at(1) == QStringLiteral("--dock"))
     {
-        // This is the process's only QApplication: a second one silently
-        // replaces qApp and leaves the first to be destroyed against
-        // already-torn-down Qt state - that was the dock's exit AV.
-        QApplication app(argc, argv);
-        app.setApplicationName("Desktops");
         installLogging();
         return Dock::run(app, arguments.at(2), arguments.at(3));
     }
 
-    QApplication app(argc, argv);
-    app.setApplicationName("Desktops");
     app.setOrganizationName(QString());
     // Without this the panel's window has no icon at all (WM_GETICON returns
     // null for both sizes) and the taskbar shows the generic one, whatever the
