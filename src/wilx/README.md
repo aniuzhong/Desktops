@@ -18,7 +18,7 @@ Header-only, WIL-style extensions for Virtual Desktop.
 
 | File | Theme |
 |---|---|
-| `desktop.h` | The window station / desktop subsystem: its three user-object families (`for_each_desktop`, `for_each_desktop_window`, `for_each_window_station`) share the one Enum\* trampoline in `wilx::details` — the shape wil's `windowing.h` uses for its three window enumerators — plus the name queries that read a desktop's identity back |
+| `desktop.h` | The window station / desktop subsystem: its three user-object families (`for_each_desktop`, `for_each_desktop_window`, `for_each_window_station`) share the one Enum\* trampoline in `wilx::details` — the shape wil's `windowing.h` uses for its three window enumerators — plus the name queries that read a desktop's identity back and the one that places a process in its session |
 | `toolhelp.h` | System process/thread iteration (`for_each_process`, `for_each_thread`) — snapshot iteration machinery |
 
 File names follow wil's two patterns only: a **singular domain noun** (`desktop.h`, mirroring

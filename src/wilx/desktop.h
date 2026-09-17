@@ -12,7 +12,8 @@
 //! The window station / desktop subsystem: enumeration of the session's window
 //! stations, their desktops, and the windows on one desktop — the three
 //! user-object families Win32 exposes through Enum* APIs — plus the name
-//! queries that read a desktop's identity back. All three enumerators share
+//! queries that read a desktop's identity back and the one that places a
+//! process in its session. All three enumerators share
 //! the trampoline in details, the way wil's windowing.h shares one for its
 //! three window enumerators; it stays there until a second API family needs it.
 #ifndef __WILX_DESKTOP_INCLUDED
@@ -20,6 +21,7 @@
 
 #include <WinUser.h>   // EnumDesktopsW, EnumDesktopWindows, GetProcessWindowStation, GetThreadDesktop
 #include <minwindef.h> // HDESK, HWINSTA, LPARAM
+#include <processthreadsapi.h> // GetCurrentProcessId, ProcessIdToSessionId
 
 #include <concepts>
 #include <cwchar>
@@ -313,6 +315,25 @@ inline std::wstring GetThreadDesktopName()
     return GetThreadDesktopName(GetCurrentThreadId());
 }
 #endif // WIL_ENABLE_EXCEPTIONS
+
+//! Session of the calling process, fixed at creation: no API moves a running
+//! process to another one, so callers may read it once. Deliberately no
+//! fail-soft sibling: 0 is a real session (services), so unlike an empty name
+//! there is no result left that could mean "failed".
+inline HRESULT GetCurrentSessionIdNoThrow(_Out_ DWORD& session) WI_NOEXCEPT
+{
+    session = 0;
+
+    SetLastError(0);
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &session))
+    {
+        const DWORD lastError = GetLastError();
+        // The API documents ERROR_INVALID_PARAMETER; the stand-in only matters
+        // if it ever failed without setting last error at all.
+        return HRESULT_FROM_WIN32(0 == lastError ? ERROR_INVALID_PARAMETER : lastError);
+    }
+    return S_OK;
+}
 } // namespace wilx
 #endif // WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 #endif // __WILX_DESKTOP_INCLUDED

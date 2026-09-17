@@ -21,20 +21,6 @@
 
 namespace
 {
-    QString sessionTag()
-    {
-        DWORD session = 0;
-        ::ProcessIdToSessionId(::GetCurrentProcessId(), &session);
-        return QString::number(session);
-    }
-
-    QString instancePipe()
-    {
-        // Session-scoped: fast user switching must not make two sessions
-        // recall each other.
-        return QString("Desktops-instance-%1").arg(sessionTag());
-    }
-
     QString g_logPath;
     QMutex g_logMutex;
 
@@ -109,9 +95,24 @@ int main(int argc, char* argv[])
     app.setWindowIcon(QIcon(QStringLiteral(":/resources/desktops.ico")));
     installLogging();
 
+    // Read once: a process's session is fixed at creation and no API moves a
+    // running one (WTSGetActiveConsoleSessionId would follow fast user
+    // switching and is deliberately not used). Must stay after installLogging
+    // so a failure here still reaches desktops.log.
+    DWORD session = 0;
+    const HRESULT hr = wilx::GetCurrentSessionIdNoThrow(session);
+    if (FAILED(hr))
+    {
+        qFatal("cannot resolve my session: 0x%08X", static_cast<unsigned>(hr));
+    }
+    const QString instanceTag = QString::number(session);
+    // Session-scoped: fast user switching must not make two sessions recall
+    // each other.
+    const QString instancePipe = QString("Desktops-instance-%1").arg(instanceTag);
+
     {
         QLocalSocket probe;
-        probe.connectToServer(instancePipe());
+        probe.connectToServer(instancePipe);
         if (probe.waitForConnected(300))
         {
             protocol::sendToken(&probe, protocol::Home);
@@ -132,16 +133,16 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    QLocalServer::removeServer(instancePipe());
+    QLocalServer::removeServer(instancePipe);
     QLocalServer instanceServer;
-    if (!instanceServer.listen(instancePipe()))
+    if (!instanceServer.listen(instancePipe))
     {
         qCritical("instance pipe listen failed: %s",
             instanceServer.errorString().toUtf8().constData());
         return -1;
     }
 
-    MainWindow window(sessionTag());
+    MainWindow window(instanceTag);
     window.show();
 
     QObject::connect(&instanceServer, &QLocalServer::newConnection, [&] {
