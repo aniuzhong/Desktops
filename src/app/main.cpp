@@ -2,7 +2,6 @@
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QIcon>
@@ -24,18 +23,7 @@ namespace
     QString g_logPath;
     QMutex g_logMutex;
 
-    const char* logLevelName(QtMsgType type)
-    {
-        switch (type)
-        {
-        case QtDebugMsg: return "debug";
-        case QtInfoMsg: return "info";
-        case QtWarningMsg: return "warn";
-        default: return "error";   // critical + fatal
-        }
-    }
-
-    void logHandler(QtMsgType type, const QMessageLogContext&, const QString& message)
+    void logHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
     {
         const QMutexLocker lock(&g_logMutex);
         QFile file(g_logPath);
@@ -46,20 +34,20 @@ namespace
         }
         if (!file.open(QIODevice::Append | QIODevice::Text))
             return;
-        file.write(QString("[%1] [P%2 T%3] [%4] %5\n")
-            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
-            .arg(::GetCurrentProcessId())
-            .arg(::GetCurrentThreadId())
-            .arg(logLevelName(type), message)
-            .toUtf8());
+        file.write(qFormatLogMessage(type, context, message).toUtf8());
+        file.putChar('\n');
     }
 
     void installLogging()
     {
-        const QString dir = QStandardPaths::writableLocation(
-            QStandardPaths::AppLocalDataLocation) + "/logs";
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/logs";
         QDir().mkpath(dir);
         g_logPath = dir + "/desktops.log";
+        // The manager and every dock share this file: P/T is what tells them
+        // apart. Qt's own placeholders cover the rest; %{category} is kept
+        // conditional so plain qWarning() lines stay uncluttered.
+        qSetMessagePattern("[%{time yyyy-MM-dd hh:mm:ss.zzz}] [P%{pid} T%{threadid}] "
+            "[%{type}] %{if-category}%{category}: %{endif}%{message}");
         qInstallMessageHandler(logHandler);
     }
 }  // namespace
