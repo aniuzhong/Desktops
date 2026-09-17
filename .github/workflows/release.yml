@@ -1,8 +1,11 @@
 # Desktops release pipeline.
 #
-# Build: static Qt (vcpkg manifest, baseline pinned in vcpkg.json) on
-# windows-latest. First run compiles qtbase (~1.5 h); later runs restore it
-# from the vcpkg binary cache.
+# Build: static Qt (vcpkg manifest, baseline pinned in vcpkg.json) on the
+# pinned windows-2025 runner. First run compiles qtbase (~1.5 h); later runs
+# restore it from the vcpkg binary cache.
+#
+# Gates before anything is published: the tag's version must equal project()
+# and vcpkg.json, and ctest must pass.
 #
 # The binary cache is a NuGet feed on GitHub Packages, not actions/cache:
 # actions/cache scopes an entry to the ref that created it, and a cache
@@ -69,6 +72,40 @@ jobs:
             -Password "$env:NUGET_TOKEN"
           & $nuget setapikey "$env:NUGET_TOKEN" -Source "$env:FEED_URL"
 
+      # One place resolves the version; every later step reads VERSION. A
+      # tagged build takes it from the tag, a manual run from project(), so a
+      # workflow_dispatch never has to guess.
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          } elseif ((Get-Content CMakeLists.txt -Raw) -match 'project\(Desktops VERSION ([0-9]+\.[0-9]+\.[0-9]+)') {
+            $version = $matches[1]
+          } else {
+            Write-Error "cannot read the version from CMakeLists.txt"
+            exit 1
+          }
+          Write-Output "version: $version"
+          Add-Content $env:GITHUB_ENV "VERSION=$version"
+
+      # Three places carry the version and nothing kept them in step: a tag
+      # whose project() still says 0.1.4 ships an exe reporting 0.1.4.
+      - name: Check version consistency
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $cmake = if ((Get-Content CMakeLists.txt -Raw) -match 'project\(Desktops VERSION ([0-9]+\.[0-9]+\.[0-9]+)') { $matches[1] } else { '' }
+          $vcpkg = (Get-Content vcpkg.json | ConvertFrom-Json).'version-string'
+          if ($cmake -ne $env:VERSION) {
+            Write-Error "tag v$env:VERSION but CMakeLists.txt says $cmake"
+            exit 1
+          }
+          if ($vcpkg -ne $env:VERSION) {
+            Write-Error "tag v$env:VERSION but vcpkg.json says $vcpkg"
+            exit 1
+          }
+
       - name: Configure
         # No pinned generator: the runner image decides which Visual Studio
         # is present (CMake auto-detects the newest). The local `static`
@@ -83,6 +120,13 @@ jobs:
 
       - name: Build
         run: cmake --build build-static --config Release --target Desktops
+
+      # The release used to build only the Desktops target, so test_wilx was
+      # never compiled and a tag could ship a build whose tests fail.
+      - name: Build and run tests
+        run: |
+          cmake --build build-static --config Release --target test_wilx
+          ctest --test-dir build-static -C Release --output-on-failure
 
       - name: Aggregate third-party notices
         shell: pwsh
@@ -106,7 +150,9 @@ jobs:
       - name: Stage release artifacts
         shell: pwsh
         run: |
-          Copy-Item "build-static/Release/Desktops.exe" stage/
+          # Version in the file name: a downloaded Desktops.exe cannot be told
+          # apart from the previous one.
+          Copy-Item "build-static/Release/Desktops.exe" "stage/Desktops-$env:VERSION.exe"
           @"
           Desktops - Windows desktops.
           Contains Qt 6 (LGPLv3) and other vcpkg dependencies; see
@@ -117,7 +163,7 @@ jobs:
       - name: Extract release notes from CHANGELOG
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $version = $env:VERSION
           $changelogPath = "CHANGELOG.md"
           
           if (Test-Path $changelogPath) {
@@ -155,4 +201,4 @@ jobs:
           
           gh release create "$env:GITHUB_REF_NAME" --title "Desktops $env:GITHUB_REF_NAME" `
             --notes "$releaseNotes" `
-            stage/Desktops.exe stage/THIRD-PARTY-NOTICES.txt stage/README.txt
+            "stage/Desktops-$env:VERSION.exe" stage/THIRD-PARTY-NOTICES.txt stage/README.txt
