@@ -76,7 +76,7 @@ int main(int argc, char* argv[])
         return Dock::run(app, arguments.at(2), arguments.at(3));
     }
 
-    app.setOrganizationName(QString());
+    // No organization name: it would insert a level into AppLocalDataLocation.
     // Without this the panel's window has no icon at all (WM_GETICON returns
     // null for both sizes) and the taskbar shows the generic one, whatever the
     // exe's resource says.
@@ -121,12 +121,12 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    QLocalServer::removeServer(instancePipe);
+    // No removeServer(): a no-op on Windows, where two servers may share one
+    // pipe name - the probe above is the only single-instance gate.
     QLocalServer instanceServer;
     if (!instanceServer.listen(instancePipe))
     {
-        qCritical("instance pipe listen failed: %s",
-            instanceServer.errorString().toUtf8().constData());
+        qCritical("instance pipe listen failed: %s", instanceServer.errorString().toUtf8().constData());
         return -1;
     }
 
