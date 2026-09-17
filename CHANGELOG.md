@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.2.0] - 2026-09-17
+
+### Added
+- Minimized windows can be listed and restored from the dock's right-click menu
+
+### Changed
+- Release pipeline: the test suite now runs as a gate (`ctest`), and the tag's version must equal `project()` and `vcpkg.json` before anything is published
+- Released artifact carries the version in its file name (`Desktops-<version>.exe`)
+- The session id is read once through `wilx::GetCurrentSessionIdNoThrow` instead of a local wrapper; the instance pipe and the panel's tag are built from it
+
+### Fixed
+- One `QApplication` per dock process: a second one silently replaced `qApp` and was destroyed after Qt had torn down - that was the dock's exit AV
+- Log rotation could lose the backup while another process was rotating, and log lines no longer carried their category
+
 ## [0.1.4] - 2026-09-16
 
 ### Added
@@ -54,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First release: a panel on the Default desktop and one dock process per extra desktop, with create and switch
 
-[Unreleased]: https://github.com/aniuzhong/Desktops/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/aniuzhong/Desktops/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/aniuzhong/Desktops/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/aniuzhong/Desktops/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/aniuzhong/Desktops/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/aniuzhong/Desktops/compare/v0.1.1...v0.1.2
