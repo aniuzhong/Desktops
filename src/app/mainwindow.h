@@ -2,10 +2,10 @@
 
 #include <windows.h>
 
-#include <QtWidgets/QListWidget>
-#include <QtWidgets/QWidget>
-#include <QtNetwork/QLocalServer>
-#include <QtNetwork/QLocalSocket>
+#include <QListWidget>
+#include <QWidget>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QLoggingCategory>
 
 #include <map>
@@ -77,6 +77,17 @@ private:
 
     // QHash/QMap are implicitly shared and copy their elements on detach,
     // so the move-only DockEntry (unique_hdesk) lives in a std::map - keyed
-    // by QString, the natural currency of every caller.
-    std::map<QString, DockEntry> docks_;
+    // by QString, the natural currency of every caller. The order is
+    // case-insensitive because desktop names are (onNew's duplicate check
+    // leans on it): a same-desktop lookup under a different spelling must
+    // find the dock, not spawn a second one.
+    struct CaseInsensitiveLess
+    {
+        bool operator()(const QString& a, const QString& b) const
+        {
+            return a.compare(b, Qt::CaseInsensitive) < 0;
+        }
+    };
+
+    std::map<QString, DockEntry, CaseInsensitiveLess> docks_;
 };

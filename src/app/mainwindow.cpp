@@ -164,7 +164,7 @@ void MainWindow::onSwitchTo()
 
 bool MainWindow::switchTo(const QString& desktop)
 {
-    if (0 == desktop.compare(kDefaultDesktop, Qt::CaseInsensitive))
+    if (desktop.compare(kDefaultDesktop, Qt::CaseInsensitive) == 0)
     {
         goHome();
         return true;

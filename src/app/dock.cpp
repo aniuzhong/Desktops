@@ -1,12 +1,14 @@
 #include "dock.h"
 
 #include <windows.h>
+#include <objbase.h>
 #include <shellapi.h>
 
 #include <QAbstractButton>
 #include <QApplication>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QHBoxLayout>
@@ -18,8 +20,6 @@
 #include <QPixmap>
 #include <QString>
 #include <QToolButton>
-#include <QSvgRenderer>
-#include <QPainter>
 
 #include <algorithm>
 #include <map>
@@ -230,22 +230,6 @@ namespace
         return iconFromHicon(largeIcon.get());
     }
 
-    // The app's own SVG (embedded via desktops.qrc), rendered at 3x for
-    // crisp scaling down to the 32px button icon.
-    QIcon appSvgIcon()
-    {
-        QSvgRenderer renderer(QStringLiteral(":/resources/desktops.svg"));
-        if (!renderer.isValid())
-            return {};
-        QImage image(96, 96, QImage::Format_ARGB32_Premultiplied);
-        image.fill(Qt::transparent);
-        QPainter painter(&image);
-        renderer.render(&painter, QRectF(0, 0, 96, 96));
-        if (image.isNull())
-            return {};
-        return QPixmap::fromImage(image);
-    }
-
     // resources/dock.qss carries the rationale behind the colours.
     QString dockStyleSheet()
     {
@@ -270,13 +254,14 @@ namespace
     // missing altogether - then the executable's own name says more.
     QString minimizedWindowName(HWND window, const std::wstring& image)
     {
+        const QString imagePath = QString::fromStdWString(image);
         const QString title = QString::fromStdWString(windowTitle(window));
         if (!title.trimmed().isEmpty()
-            && title.compare(QString::fromStdWString(image), Qt::CaseInsensitive) != 0)
+            && title.compare(imagePath, Qt::CaseInsensitive) != 0)
         {
             return title;
         }
-        return QString::fromStdWString(image.substr(image.find_last_of(L"\\/") + 1));
+        return QFileInfo(imagePath).fileName();
     }
 
     QIcon iconForExecutable(const std::wstring& image)
@@ -387,14 +372,17 @@ namespace
                                    const std::function<void()>& handler) {
             auto* button = new QToolButton(dock);
             if (!icon.isNull())
-                button->setIcon(std::move(icon));
+                button->setIcon(icon);
             button->setIconSize(QSize(kIconSize, kIconSize));
             button->setFixedSize(kButtonSize, kButtonSize);
             button->setToolTip(label);
             row->addWidget(button);
             QObject::connect(button, &QAbstractButton::clicked, handler);
         };
-        addButton(appSvgIcon(), "Default", onDefault);
+        // The app's own SVG (embedded via desktops.qrc): Qt's SVG icon engine
+        // (qsvgicon, statically linked via Qt6::Svg) renders it on demand at
+        // the size each button asks for, vector-crisp.
+        addButton(QIcon(QStringLiteral(":/resources/desktops.svg")), "Default", onDefault);
         addButton(executableIcon(systemDirectory() + kPowershellSuffix), "PowerShell", onPowerShell);
         addButton(executableIcon(systemDirectory() + kCmdSuffix), "CMD", onCmd);
         addButton(executableIcon(systemDirectory() + kNotepadSuffix), "NotePad", onNotepad);
@@ -429,12 +417,10 @@ int Dock::run(QCoreApplication& app, const QString& desktop, const QString& pipe
     QApplication::setQuitOnLastWindowClosed(false);
 
     const std::wstring desktopWide = desktop.toStdWString();
-    const wil::unique_hdesk desktopPin(
-        ::OpenDesktopW(desktopWide.c_str(), 0, FALSE, GENERIC_ALL));
+    const wil::unique_hdesk desktopPin(::OpenDesktopW(desktopWide.c_str(), 0, FALSE, GENERIC_ALL));
     if (!desktopPin)
     {
-        qCCritical(lcDock, "OpenDesktopW('%s') failed (%lu)",
-            desktop.toUtf8().constData(), ::GetLastError());
+        qCCritical(lcDock, "OpenDesktopW('%s') failed (%lu)", desktop.toUtf8().constData(), ::GetLastError());
         return 3;
     }
 
@@ -626,13 +612,31 @@ bool Dock::launch(const std::wstring& exe, const std::wstring& args,
 
 void Dock::shellOpen(const std::wstring& file)
 {
+    // The only caller runs on a detached worker, which has no COM apartment
+    // (the dock's main thread got one from Qt; it does not carry over).
+    // ShellExecuteEx can delegate to COM shell extensions, so initialize it
+    // here with the flags the ShellExecuteEx docs prescribe. A changed mode
+    // means the thread already has an apartment of another kind - usable
+    // as-is, and not ours to uninitialize.
+    const HRESULT initialized = ::CoInitializeEx(nullptr,
+        COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
+    {
+        qCWarning(lcDock, "CoInitializeEx failed (0x%08X)",
+            static_cast<unsigned>(initialized));
+        return;
+    }
+
     SHELLEXECUTEINFOW sei{};
     sei.cbSize = sizeof(sei);
     sei.lpFile = file.c_str();
     sei.nShow = SW_SHOWNORMAL;
-    // The dock's main thread is attached to the desktop, so
-    // ShellExecuteEx lands the new process there; associations are the
-    // system's job.
+    // The worker inherited the process's desktop attachment (lpDesktop at
+    // launch), so ShellExecuteEx lands the new process there; associations
+    // are the system's job.
     if (!::ShellExecuteExW(&sei))
         qCWarning(lcDock, "ShellExecuteExW failed (%lu)", ::GetLastError());
+
+    if (SUCCEEDED(initialized))
+        ::CoUninitialize();
 }

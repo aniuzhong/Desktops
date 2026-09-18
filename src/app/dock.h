@@ -3,7 +3,7 @@
 #include <windows.h>
 
 #include <QCoreApplication>
-#include <QtNetwork/QLocalSocket>
+#include <QLocalSocket>
 
 #include <QString>
 
